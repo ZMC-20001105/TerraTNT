@@ -11,13 +11,16 @@ import ee
 from pathlib import Path
 import time
 
-# 初始化Earth Engine
+# 初始化Earth Engine - 使用服务账号
+import os
+credentials_path = '/home/zmc/文档/programwork/gen-lang-client-0843667030-72e96d89711d.json'
+os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credentials_path
+
 try:
     ee.Initialize()
-    print("✓ Earth Engine 已初始化")
-except:
-    print("需要先认证 Earth Engine")
-    print("运行: earthengine authenticate")
+    print("✓ Earth Engine 已初始化（服务账号）")
+except Exception as e:
+    print(f"❌ 初始化失败: {e}")
     sys.exit(1)
 
 # 区域配置
