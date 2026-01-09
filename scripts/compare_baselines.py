@@ -82,18 +82,19 @@ for model_name, model_path in models_found.items():
         # 加载模型
         checkpoint = torch.load(model_path, map_location='cpu')
         
-        # TODO: 实例化对应的模型并加载权重
-        # 这里需要根据模型名称创建对应的模型实例
-        
-        # 模拟评估结果
-        results[model_name] = {
-            'ade': np.random.uniform(1000, 3000),
-            'fde': np.random.uniform(2000, 5000),
-            'model_path': str(model_path)
-        }
-        
-        print(f"  ADE: {results[model_name]['ade']:.1f}m")
-        print(f"  FDE: {results[model_name]['fde']:.1f}m")
+        # 从checkpoint读取真实评估结果
+        if 'val_ade' in checkpoint and 'val_fde' in checkpoint:
+            results[model_name] = {
+                'ade': checkpoint['val_ade'],
+                'fde': checkpoint['val_fde'],
+                'epoch': checkpoint.get('epoch', 'N/A'),
+                'model_path': str(model_path)
+            }
+            print(f"  ADE: {results[model_name]['ade']:.1f}m")
+            print(f"  FDE: {results[model_name]['fde']:.1f}m")
+            print(f"  Epoch: {results[model_name]['epoch']}")
+        else:
+            print(f"  ⚠️ Checkpoint缺少评估指标，跳过")
         
     except Exception as e:
         print(f"  ✗ 评估失败: {e}")
