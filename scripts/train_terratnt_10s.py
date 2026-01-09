@@ -147,7 +147,14 @@ def train_phase(phase):
     train_size = len(dataset) - val_size
     train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
     
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, pin_memory=True)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=True,
+        num_workers=8,  # 增加worker数量
+        pin_memory=True,
+        prefetch_factor=4  # 预加载更多batch
+    )
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS, pin_memory=True)
     
     print(f"训练batches: {len(train_loader)}, 验证batches: {len(val_loader)}")
