@@ -1,0 +1,495 @@
+# ============================================================
+# 多星协同观测任务规划系统 - 全局配置文件
+# ============================================================
+
+# 项目基础路径
+project:
+  name: "TerraTNT Trajectory Prediction"
+  version: "1.0.0"
+  root_dir: "/home/zmc/文档/programwork"
+
+# 数据路径配置
+paths:
+  # 原始数据
+  raw_data:
+    gee: "data/raw/gee"
+    oord: "data/oord"
+    oord_extracted: "data/oord_extracted"
+    osm: "data/raw/osm"
+  
+  # 处理后数据
+  processed:
+    root: "data/processed"
+    merged_gee: "data/processed/merged_gee"
+    utm_grid: "data/processed/utm_grid"
+    trajectories: "data/processed/trajectories"
+    environment_features: "data/processed/environment_features"
+    speed_training: "data/processed/speed_training"
+    synthetic_trajectories: "data/processed/synthetic_trajectories"
+    terratnt_data: "data/processed/terratnt_data"
+  
+  # 模型保存路径
+  models:
+    root: "models/saved"
+    speed_predictor: "models/saved/speed_predictor"
+    terratnt: "models/saved/terratnt"
+    checkpoints: "models/checkpoints"
+  
+  # 输出路径
+  outputs:
+    figures: "outputs/figures"
+    logs: "outputs/logs"
+    results: "outputs/results"
+    exports: "outputs/exports"
+
+# 地理区域配置
+regions:
+  scottish_highlands:
+    name: "Scottish Highlands"
+    bounds:
+      lon_min: -5.5
+      lon_max: -3.5
+      lat_min: 56.5
+      lat_max: 58.5
+    utm_zone: "30N"
+    epsg: 32630
+  
+  bohemian_forest:
+    name: "Bohemian Forest"
+    bounds:
+      lon_min: 13.0
+      lon_max: 14.0
+      lat_min: 48.5
+      lat_max: 49.5
+    utm_zone: "33N"
+    epsg: 32633
+  
+  donbas:
+    name: "Donbas"
+    bounds:
+      lon_min: 37.0
+      lon_max: 39.0
+      lat_min: 47.5
+      lat_max: 49.0
+    utm_zone: "37N"
+    epsg: 32637
+  
+  carpathians:
+    name: "Carpathians"
+    bounds:
+      lon_min: 24.0
+      lon_max: 26.0
+      lat_min: 45.5
+      lat_max: 47.0
+    utm_zone: "35N"
+    epsg: 32635
+
+# GEE 数据配置
+gee:
+  # 数据源
+  datasets:
+    dem:
+      source: "USGS/SRTMGL1_003"
+      band: "elevation"
+      resolution: 30  # meters
+      dtype: "int16"
+    
+    lulc:
+      source: "ESA/WorldCover/v200"
+      band: "Map"
+      resolution: 10  # meters
+      dtype: "uint8"
+      classes:
+        10: "Tree cover"
+        20: "Shrubland"
+        30: "Grassland"
+        40: "Cropland"
+        50: "Built-up"
+        60: "Bare/sparse vegetation"
+        80: "Permanent water bodies"
+        90: "Herbaceous wetland"
+        100: "Moss and lichen"
+  
+  # 分块下载配置
+  chunking:
+    dem_splits: [4, 4]      # 4x4 = 16 chunks
+    lulc_splits: [8, 8]     # 8x8 = 64 chunks
+    slope_splits: [4, 4]
+    aspect_splits: [4, 4]
+  
+  # 合并后统一分辨率
+  target_resolution: 30  # meters
+
+# OORD 数据配置
+oord:
+  # GPS 配置
+  gps:
+    sampling_rate: 4  # Hz
+    fields:
+      timestamp: "timestamp"
+      latitude: "latitude"
+      longitude: "longitude"
+      height: "height_above_ellipsoid"
+      velocity_north: "velocity_north"
+      velocity_east: "velocity_east"
+      velocity_speed: "velocity_speed"
+      velocity_heading: "velocity_heading"
+  
+  # IMU 配置
+  imu:
+    sampling_rate: 100  # Hz
+    downsample_to: 4    # Hz (align with GPS)
+    fields:
+      timestamp: "timestamp"
+      accel_x: "accelerometer.x"
+      accel_y: "accelerometer.y"
+      accel_z: "accelerometer.z"
+      gyro_x: "gyro.x"
+      gyro_y: "gyro.y"
+      gyro_z: "gyro.z"
+  
+  # 轨迹处理配置
+  trajectory:
+    min_length: 100        # 最小轨迹点数
+    max_speed: 30.0        # m/s (过滤异常值)
+    smooth_window: 5       # 平滑窗口大小
+
+# 环境特征配置
+environment:
+  # 特征通道数
+  num_channels: 18
+  
+  # 特征列表
+  features:
+    - name: "elevation"
+      channels: 1
+      normalization: "standardize"  # standardize or minmax
+    
+    - name: "slope"
+      channels: 1
+      normalization: "minmax"
+      range: [0, 60]  # degrees
+    
+    - name: "aspect_sin"
+      channels: 1
+      normalization: "none"
+    
+    - name: "aspect_cos"
+      channels: 1
+      normalization: "none"
+    
+    - name: "lulc_onehot"
+      channels: 9
+      normalization: "none"
+    
+    - name: "curvature_planar"
+      channels: 1
+      normalization: "standardize"
+    
+    - name: "curvature_profile"
+      channels: 1
+      normalization: "standardize"
+    
+    - name: "slope_gradient_x"
+      channels: 1
+      normalization: "standardize"
+    
+    - name: "slope_gradient_y"
+      channels: 1
+      normalization: "standardize"
+  
+  # 局部窗口大小（用于 TerraTNT）
+  local_window_size: 256  # pixels (256 * 30m = 7.68km)
+
+# 速度预测模型配置
+speed_predictor:
+  model_type: "xgboost"
+  
+  # XGBoost 超参数
+  xgboost:
+    n_estimators: 500
+    max_depth: 8
+    learning_rate: 0.05
+    subsample: 0.8
+    colsample_bytree: 0.8
+    min_child_weight: 3
+    gamma: 0.1
+    reg_alpha: 0.1
+    reg_lambda: 1.0
+    random_state: 42
+  
+  # 训练配置
+  training:
+    test_size: 0.2
+    cv_folds: 5
+    early_stopping_rounds: 50
+    eval_metric: "rmse"
+
+# 轨迹生成配置
+trajectory_generation:
+  # A* 算法配置
+  astar:
+    heuristic: "euclidean"  # euclidean, manhattan, diagonal
+    allow_diagonal: true
+    cost_weights:
+      distance: 1.0
+      time: 2.0
+      elevation_gain: 0.5
+      terrain_difficulty: 1.5
+  
+  # 代价地图配置
+  cost_map:
+    # 地表类型代价（相对速度）
+    lulc_costs:
+      10: 0.7   # Tree cover (慢)
+      20: 0.8   # Shrubland
+      30: 1.0   # Grassland (基准)
+      40: 0.9   # Cropland
+      50: 0.0   # Built-up (禁止)
+      60: 0.6   # Bare/sparse vegetation
+      80: 0.0   # Water (禁止)
+      90: 0.3   # Wetland (很慢)
+      100: 0.5  # Moss and lichen
+    
+    # 坡度代价
+    slope_penalty:
+      threshold: 30  # degrees
+      max_slope: 45  # degrees (超过则禁止)
+  
+  # 合成轨迹数量
+  num_synthetic: 1000
+  
+  # 轨迹平滑
+  smoothing:
+    method: "spline"  # spline, gaussian, savgol
+    spline_order: 3
+    spline_smoothing: 0.1
+
+# TerraTNT 模型配置
+terratnt:
+  # 数据配置
+  data:
+    history_length: 240      # 60s * 4Hz = 240 frames
+    prediction_length: 240   # 60min / 15s = 240 frames
+    prediction_interval: 15  # seconds
+    
+    # 数据增强
+    augmentation:
+      enabled: true
+      rotation: true
+      flip: false
+      noise_std: 0.5  # meters
+  
+  # 模型架构
+  architecture:
+    # 环境编码器 (CNN)
+    env_encoder:
+      backbone: "resnet18"  # resnet18, resnet34, efficientnet_b0
+      pretrained: true
+      output_dim: 256
+    
+    # 历史轨迹编码器 (LSTM)
+    traj_encoder:
+      input_dim: 4  # (x, y, vx, vy)
+      hidden_dim: 128
+      num_layers: 2
+      dropout: 0.2
+    
+    # 目标分类器
+    target_classifier:
+      num_classes: 10  # K 个目标类别
+      hidden_dim: 256
+    
+    # 分层解码器 (Hierarchical LSTM)
+    decoder:
+      num_levels: 3  # 粗、中、细
+      hidden_dims: [256, 128, 64]
+      dropout: 0.2
+  
+  # 训练配置
+  training:
+    batch_size: 32
+    num_epochs: 100
+    learning_rate: 0.001
+    weight_decay: 0.0001
+    optimizer: "adam"
+    scheduler: "cosine"
+    
+    # 损失函数权重
+    loss_weights:
+      classification: 1.0
+      regression: 10.0
+      smoothness: 0.1
+    
+    # 早停
+    early_stopping:
+      patience: 15
+      min_delta: 0.001
+  
+  # 评估指标
+  evaluation:
+    metrics:
+      - "ADE"   # Average Displacement Error
+      - "FDE"   # Final Displacement Error
+      - "MR"    # Miss Rate
+    mr_thresholds: [100, 200, 500]  # meters
+
+# 绘图配置
+plotting:
+  # 全局样式
+  style: "seaborn-v0_8-darkgrid"
+  context: "paper"  # paper, notebook, talk, poster
+  
+  # 字体配置
+  font:
+    family: "DejaVu Sans"
+    size: 12
+    title_size: 14
+    label_size: 11
+    legend_size: 10
+  
+  # 图形尺寸
+  figure:
+    dpi: 300
+    format: 'png'
+    default_size: [10, 6]  # inches
+    large_size: [14, 8]
+    small_size: [6, 4]
+  
+  # 中文字体配置
+  chinese_font:
+    path: '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'
+    family: 'Noto Sans CJK SC'
+  
+  # 论文图片尺寸（单栏/双栏）
+  paper_figure_size:
+    single_column: [3.5, 3.5]  # 英寸，适合单栏
+    double_column: [7.0, 5.25]  # 英寸，适合双栏
+  
+  # 字体大小
+  font_sizes:
+    title: 10
+    label: 9
+    tick: 8
+    legend: 8
+  
+  # 线宽和标记大小
+  line_width: 1.0
+  marker_size: 3
+  
+  # 颜色配置
+  colors:
+    primary: "#2E86AB"
+    secondary: "#A23B72"
+    accent: "#F18F01"
+    success: "#06A77D"
+    warning: "#F77F00"
+    error: "#D62828"
+    
+    # 轨迹颜色
+    trajectory:
+      real: "#2E86AB"
+      predicted: "#F18F01"
+      synthetic: "#A23B72"
+    
+    # 地图颜色
+    terrain:
+      water: "#4A90E2"
+      forest: "#2D5016"
+      grassland: "#8BC34A"
+      urban: "#9E9E9E"
+  
+  # 地图配置
+  map:
+    basemap: "satellite"  # satellite, terrain, osm
+    alpha: 0.7
+    show_grid: true
+    show_scale: true
+
+# Qt 界面配置
+gui:
+  # 窗口配置
+  window:
+    title: "TerraTNT - 多星协同观测任务规划系统"
+    width: 1600
+    height: 900
+    min_width: 1200
+    min_height: 700
+  
+  # 主题
+  theme:
+    name: "fusion"  # fusion, windows, macos
+    dark_mode: false
+    accent_color: "#2E86AB"
+  
+  # 模块配置
+  modules:
+    - name: "数据管理"
+      icon: "database"
+      enabled: true
+    
+    - name: "地图视图"
+      icon: "map"
+      enabled: true
+    
+    - name: "轨迹分析"
+      icon: "chart-line"
+      enabled: true
+    
+    - name: "模型训练"
+      icon: "brain"
+      enabled: true
+    
+    - name: "任务规划"
+      icon: "satellite"
+      enabled: true
+    
+    - name: "结果导出"
+      icon: "download"
+      enabled: true
+
+# 日志配置
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  date_format: "%Y-%m-%d %H:%M:%S"
+  
+  # 文件日志
+  file:
+    enabled: true
+    max_bytes: 10485760  # 10MB
+    backup_count: 5
+  
+  # 控制台日志
+  console:
+    enabled: true
+    colored: true
+
+# 性能配置
+performance:
+  # 多进程
+  num_workers: 8
+  
+  # 缓存
+  cache:
+    enabled: true
+    max_size: 1073741824  # 1GB
+  
+  # GPU
+  gpu:
+    enabled: true
+    device_id: 0
+    mixed_precision: true
+
+# 网络配置（用于数据下载）
+network:
+  proxy:
+    enabled: true
+    type: "socks5"
+    host: "127.0.0.1"
+    port: 7897
+  
+  retry:
+    max_attempts: 5
+    backoff_factor: 2
+    timeout: 300  # seconds

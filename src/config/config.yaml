@@ -1,0 +1,145 @@
+# 项目配置文件
+
+# 数据路径配置
+data:
+  osm_dir: "data/osm"
+  dem_dir: "data/dem" 
+  lulc_dir: "data/lulc"
+  oord_dir: "data/oord"
+  output_dir: "data/processed"
+  
+# 坐标系统配置
+coordinate_system:
+  input_crs: "EPSG:4326"  # WGS84
+  target_crs: "EPSG:32630"  # UTM 30N (适用于欧洲西部)
+  
+# 环境数据配置
+environment:
+  resolution: 30  # 栅格分辨率(米)
+  lulc_classes:
+    10: {name: "耕地", passable: true, cost: 1.2}
+    20: {name: "森林", passable: true, cost: 1.8}
+    30: {name: "草地", passable: true, cost: 1.0}
+    40: {name: "灌木地", passable: true, cost: 1.5}
+    50: {name: "湿地", passable: false, cost: null}
+    60: {name: "水体", passable: false, cost: null}
+    70: {name: "苔原", passable: true, cost: 2.0}
+    80: {name: "人造地表", passable: true, cost: 0.5}
+    90: {name: "裸地", passable: true, cost: 1.3}
+    100: {name: "冰雪", passable: false, cost: null}
+  
+  max_slope: 30  # 最大可通行坡度(度)
+  
+# 车辆类型配置
+vehicle_types:
+  light_vehicle:
+    name: "轻型车辆"
+    max_speed: 80  # km/h
+    max_acceleration: 3.0  # m/s²
+    max_deceleration: 5.0  # m/s²
+    min_turn_radius: 5.0  # m
+    
+  heavy_vehicle:
+    name: "重型车辆" 
+    max_speed: 60
+    max_acceleration: 2.0
+    max_deceleration: 4.0
+    min_turn_radius: 10.0
+    
+  armored_vehicle:
+    name: "装甲车辆"
+    max_speed: 70
+    max_acceleration: 2.5
+    max_deceleration: 4.5
+    min_turn_radius: 8.0
+    
+  special_vehicle:
+    name: "特种车辆"
+    max_speed: 50
+    max_acceleration: 1.5
+    max_deceleration: 3.5
+    min_turn_radius: 12.0
+
+# 战术意图配置
+tactical_intents:
+  standard:
+    name: "标准"
+    distance_weight: 1.0
+    slope_weight: 1.0
+    lulc_weight: 1.0
+    exposure_weight: 1.0
+    
+  stealth:
+    name: "隐蔽优先"
+    distance_weight: 1.2
+    slope_weight: 0.8
+    lulc_weight: 1.5
+    exposure_weight: 2.0
+    
+  speed:
+    name: "高机动性"
+    distance_weight: 0.8
+    slope_weight: 1.2
+    lulc_weight: 0.6
+    exposure_weight: 0.5
+
+# 路径规划配置
+path_planning:
+  algorithm: "hierarchical_astar"
+  heuristic: "euclidean"
+  grid_resolution: 30  # 网格分辨率
+  
+# 轨迹生成配置
+trajectory_generation:
+  time_step: 10  # 时间步长(秒)
+  max_duration: 3600  # 最大轨迹时长(秒)
+  smoothing_window: 5  # 平滑窗口大小
+  
+# TerraTNT模型配置
+model:
+  environment_encoder:
+    input_channels: 18
+    hidden_channels: [64, 128, 256]
+    kernel_size: 3
+    
+  history_encoder:
+    input_dim: 6  # x, y, vx, vy, ax, ay
+    hidden_dim: 128
+    num_layers: 2
+    
+  target_classifier:
+    hidden_dim: 256
+    num_candidates: 10
+    
+  trajectory_decoder:
+    hidden_dim: 128
+    num_waypoints: 10
+    output_dim: 2  # x, y coordinates
+    
+# 训练配置
+training:
+  batch_size: 32
+  learning_rate: 0.001
+  max_epochs: 30
+  early_stopping_patience: 5
+  validation_split: 0.2
+  
+  optimizer: "adam"
+  scheduler: "cosine"
+  
+  loss_weights:
+    trajectory_loss: 1.0
+    target_loss: 0.5
+    
+# 评估配置
+evaluation:
+  metrics: ["ADE", "FDE", "EP@1", "EP@5"]
+  prediction_horizon: 60  # 预测时长(分钟)
+  observation_length: 9   # 观测时长(分钟)
+  
+# 可视化配置
+visualization:
+  map_style: "OpenStreetMap"
+  trajectory_colors: ["blue", "red", "green", "orange"]
+  figure_size: [12, 8]
+  dpi: 300

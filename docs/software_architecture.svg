@@ -1,0 +1,60 @@
+<svg width="800" height="600" viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg">
+    <!-- Background -->
+    <rect width="800" height="600" fill="#f8f9fa" rx="10" ry="10"/>
+    
+    <!-- Title -->
+    <text x="400" y="40" font-family="Arial, sans-serif" font-size="24" font-weight="bold" text-anchor="middle" fill="#2c3e50">TerraTNT 系统架构设计图</text>
+    
+    <!-- Layers -->
+    
+    <!-- Interaction Layer -->
+    <rect x="50" y="80" width="700" height="100" fill="#3498db" rx="5" ry="5"/>
+    <text x="400" y="110" font-family="Arial, sans-serif" font-size="18" font-weight="bold" text-anchor="middle" fill="white">交互层 (UI Layer - PyQt5)</text>
+    <text x="400" y="135" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="white">主窗口 | 卫星星座 | 轨迹预测 | 数据生成 | 地图显示</text>
+    <text x="400" y="155" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="white">Matplotlib 可视化画布</text>
+    
+    <!-- Arrow -->
+    <path d="M 400 180 L 400 210" stroke="#7f8c8d" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+    
+    <!-- Application Layer -->
+    <rect x="50" y="210" width="700" height="100" fill="#2ecc71" rx="5" ry="5"/>
+    <text x="400" y="240" font-family="Arial, sans-serif" font-size="18" font-weight="bold" text-anchor="middle" fill="white">应用层 (Application Layer)</text>
+    <text x="400" y="265" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="white">训练器 (Trainer) | 评估框架 (Evaluator) | 任务调度</text>
+    <text x="400" y="285" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="white">FAS 数据划分逻辑 | 并行计算管理</text>
+    
+    <!-- Arrow -->
+    <path d="M 400 310 L 400 340" stroke="#7f8c8d" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+    
+    <!-- Model & Data Layer Container -->
+    <g>
+        <!-- Data Layer -->
+        <rect x="50" y="340" width="340" height="120" fill="#f1c40f" rx="5" ry="5"/>
+        <text x="220" y="370" font-family="Arial, sans-serif" font-size="18" font-weight="bold" text-anchor="middle" fill="#2c3e50">数据层 (Data Layer)</text>
+        <text x="220" y="395" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="#2c3e50">轨迹 (PKL) | 栅格 (GeoTIFF)</text>
+        <text x="220" y="415" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="#2c3e50">DEM | LULC | OSM 道路</text>
+        <text x="220" y="435" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="#2c3e50">GDAL / Rasterio 处理</text>
+        
+        <!-- Model Layer -->
+        <rect x="410" y="340" width="340" height="120" fill="#e74c3c" rx="5" ry="5"/>
+        <text x="580" y="370" font-family="Arial, sans-serif" font-size="18" font-weight="bold" text-anchor="middle" fill="white">模型层 (Model Layer)</text>
+        <text x="580" y="395" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="white">TerraTNT (CNN+LSTM)</text>
+        <text x="580" y="415" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="white">基线模型 (YNet, PECNet, etc.)</text>
+        <text x="580" y="435" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="white">XGBoost 速度预测</text>
+    </g>
+    
+    <!-- Data Flow Arrows -->
+    <path d="M 390 380 L 410 380" stroke="#2c3e50" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+    <path d="M 410 400 L 390 400" stroke="#2c3e50" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+    
+    <!-- Bottom Infrastructure -->
+    <rect x="50" y="500" width="700" height="60" fill="#95a5a6" rx="5" ry="5"/>
+    <text x="400" y="525" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="white">基础架构 (Infrastructure)</text>
+    <text x="400" y="545" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="white">Linux Server | Conda | PyTorch | NVIDIA GPU (CUDA)</text>
+    
+    <!-- Marker Definition -->
+    <defs>
+        <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#2c3e50" />
+        </marker>
+    </defs>
+</svg>

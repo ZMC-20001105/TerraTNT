@@ -1,0 +1,80 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+venv-torch/
+ENV/
+env/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Data files (too large for git)
+data/raw/
+data/processed/
+*.tif
+*.pkl
+*.h5
+*.hdf5
+*.nc
+
+# Model checkpoints
+models/checkpoints/
+*.pth
+*.pt
+
+# Logs
+logs/*.log
+*.log
+
+# Results
+results/visualizations/*.png
+results/visualizations/*.jpg
+results/predictions/
+results/evaluation/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Google Earth Engine credentials
+*.json
+!config.json
+!package.json
+
+# Large data files
+*.zip
+*.tar.gz
+*.rar
