@@ -44,43 +44,65 @@ paths:
 
 # 地理区域配置
 regions:
+  # ── 现有区域（已扩大范围，确保140km环境地图提取不越界）──
+  bohemian_forest:
+    name: "Bohemian Forest"
+    bounds:  # 扩大到 ~220x220km（原112x114km）
+      lon_min: 12.3
+      lon_max: 15.0
+      lat_min: 48.0
+      lat_max: 50.0
+    utm_zone: "33N"
+    epsg: 32633
+  
   scottish_highlands:
     name: "Scottish Highlands"
-    bounds:
-      lon_min: -5.5
-      lon_max: -3.5
+    bounds:  # 保持 ~220x220km（原125x226km，宽度足够）
+      lon_min: -6.0
+      lon_max: -3.0
       lat_min: 56.5
       lat_max: 58.5
     utm_zone: "30N"
     epsg: 32630
   
-  bohemian_forest:
-    name: "Bohemian Forest"
-    bounds:
-      lon_min: 13.0
-      lon_max: 14.0
-      lat_min: 48.5
-      lat_max: 49.5
-    utm_zone: "33N"
-    epsg: 32633
-  
+  # ── 新增区域 ──
   donbas:
     name: "Donbas"
-    bounds:
-      lon_min: 37.0
-      lon_max: 39.0
+    bounds:  # 乌克兰东部顿巴斯 ~220x220km
+      lon_min: 36.5
+      lon_max: 39.5
       lat_min: 47.5
-      lat_max: 49.0
+      lat_max: 49.5
     utm_zone: "37N"
     epsg: 32637
   
   carpathians:
     name: "Carpathians"
-    bounds:
-      lon_min: 24.0
-      lon_max: 26.0
-      lat_min: 45.5
+    bounds:  # 罗马尼亚喀尔巴阡山区 ~220x220km
+      lon_min: 23.5
+      lon_max: 26.5
+      lat_min: 45.0
       lat_max: 47.0
+    utm_zone: "35N"
+    epsg: 32635
+  
+  ardennes:
+    name: "Ardennes"
+    bounds:  # 比利时阿登森林 ~220x220km
+      lon_min: 4.5
+      lon_max: 7.0
+      lat_min: 49.0
+      lat_max: 51.0
+    utm_zone: "31N"
+    epsg: 32631
+  
+  norway_finnmark:
+    name: "Finnmark"
+    bounds:  # 挪威芬马克极地苔原 ~220x220km
+      lon_min: 24.0
+      lon_max: 29.0
+      lat_min: 69.0
+      lat_max: 71.0
     utm_zone: "35N"
     epsg: 32635
 

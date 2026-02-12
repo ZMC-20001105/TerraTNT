@@ -28,33 +28,27 @@ except Exception as e:
     print("  请确认服务账号密钥文件存在且有效")
     sys.exit(1)
 
-# 区域配置 (从config.yaml提取 + 新增区域)
-REGIONS = {
-    'donbas': {
-        'name': 'Donbas',
-        'bounds': [37.0, 47.5, 39.0, 49.0],  # [min_lon, min_lat, max_lon, max_lat]
-        'epsg': 32637,  # UTM 37N
-        'description': '乌克兰东部顿巴斯地区 (~150x170km)'
-    },
-    'carpathians': {
-        'name': 'Carpathians',
-        'bounds': [24.0, 45.5, 26.0, 47.0],
-        'epsg': 32635,  # UTM 35N
-        'description': '罗马尼亚喀尔巴阡山区 (~150x170km)'
-    },
-    'ardennes': {
-        'name': 'Ardennes',
-        'bounds': [5.0, 49.5, 6.5, 50.5],
-        'epsg': 32631,  # UTM 31N
-        'description': '比利时阿登森林地区 (~110x110km)'
-    },
-    'norway_finnmark': {
-        'name': 'Finnmark',
-        'bounds': [25.0, 69.5, 28.0, 70.5],
-        'epsg': 32635,  # UTM 35N
-        'description': '挪威芬马克极地苔原 (~100x110km)'
-    },
-}
+# 从config.yaml读取区域配置
+import yaml
+
+def load_regions_from_config():
+    """从config.yaml读取所有区域配置"""
+    config_path = Path('/home/zmc/文档/programwork/config/config.yaml')
+    with open(config_path, 'r', encoding='utf-8') as f:
+        cfg = yaml.safe_load(f)
+    
+    regions = {}
+    for key, rcfg in cfg.get('regions', {}).items():
+        b = rcfg['bounds']
+        regions[key] = {
+            'name': rcfg['name'],
+            'bounds': [b['lon_min'], b['lat_min'], b['lon_max'], b['lat_max']],
+            'epsg': rcfg['epsg'],
+            'description': f"{rcfg['name']} (UTM {rcfg['utm_zone']})",
+        }
+    return regions
+
+REGIONS = load_regions_from_config()
 
 
 def download_region_data(region_key, region_config, drive_folder='GEE_TerraTNT'):
