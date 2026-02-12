@@ -1,0 +1,340 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Tab 1: 交互式样本分析 — 核心标签页"""
+import sys
+import numpy as np
+from pathlib import Path
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QListWidget,
+    QListWidgetItem, QComboBox, QLabel, QGroupBox, QCheckBox,
+    QRadioButton, QButtonGroup, QLineEdit, QScrollArea, QTabWidget,
+)
+from PyQt6.QtCore import Qt
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from visualization.ui.map_view import MapView
+from visualization.utils.colors import MODEL_COLORS, hex_to_rgb
+
+
+class EnvChannelView(QWidget):
+    """环境特征18通道可视化"""
+    CH_NAMES = [
+        'DEM', 'Slope', 'Aspect_sin', 'Aspect_cos',
+        'LULC_0', 'LULC_1', 'LULC_2', 'LULC_3', 'LULC_4',
+        'LULC_5', 'LULC_6', 'LULC_7', 'LULC_8', 'LULC_9',
+        'TreeCover', 'Road', 'History', 'Goal/Prior',
+    ]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(2, 2, 2, 2)
+        top = QHBoxLayout()
+        top.addWidget(QLabel("通道:"))
+        self.ch_combo = QComboBox()
+        self.ch_combo.addItems(self.CH_NAMES)
+        self.ch_combo.currentIndexChanged.connect(self._redraw)
+        top.addWidget(self.ch_combo, stretch=1)
+        layout.addLayout(top)
+
+        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+        from matplotlib.figure import Figure
+        self.fig = Figure(figsize=(4, 4), dpi=100)
+        self.ax = self.fig.add_subplot(111)
+        self.canvas = FigureCanvasQTAgg(self.fig)
+        layout.addWidget(self.canvas)
+        self._env_map = None
+
+    def update_env(self, sample):
+        if sample is not None and sample.env_map.ndim == 3 and sample.env_map.shape[0] >= 18:
+            self._env_map = sample.env_map
+        else:
+            self._env_map = None
+        self._redraw()
+
+    def _redraw(self):
+        self.ax.clear()
+        if self._env_map is None:
+            self.ax.set_title("无环境数据")
+            self.canvas.draw()
+            return
+        ch = self.ch_combo.currentIndex()
+        if ch < self._env_map.shape[0]:
+            self.ax.imshow(self._env_map[ch], cmap='viridis', origin='upper')
+            self.ax.set_title(f"Ch{ch}: {self.CH_NAMES[ch]}")
+        self.fig.tight_layout()
+        self.canvas.draw()
+
+
+class TrajectoryView(QWidget):
+    """轨迹对比视图"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(2, 2, 2, 2)
+        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+        from matplotlib.figure import Figure
+        self.fig = Figure(figsize=(5, 5), dpi=100)
+        self.ax = self.fig.add_subplot(111)
+        self.canvas = FigureCanvasQTAgg(self.fig)
+        layout.addWidget(self.canvas)
+
+    def update_plot(self, sample, predictions, model_visibility):
+        self.ax.clear()
+        if sample is None:
+            self.canvas.draw()
+            return
+        if sample.history_rel is not None and len(sample.history_rel) > 0:
+            h = sample.history_rel
+            self.ax.plot(h[:, 0], h[:, 1], '--', color='gray', lw=1.5, label='History', alpha=0.7)
+        if sample.future_rel is not None and len(sample.future_rel) > 0:
+            f = sample.future_rel
+            self.ax.plot(f[:, 0], f[:, 1], '-', color='black', lw=2.5, label='GT', zorder=10)
+            self.ax.plot(f[-1, 0], f[-1, 1], '*', color='black', ms=12, zorder=11)
+        for mn, pred in predictions.items():
+            if not model_visibility.get(mn, True) or pred is None or len(pred) < 2:
+                continue
+            self.ax.plot(pred[:, 0], pred[:, 1], '-', color=MODEL_COLORS.get(mn, '#888'),
+                         lw=1.5, label=mn, alpha=0.8)
+        if sample.candidates_rel is not None and len(sample.candidates_rel) > 0:
+            c = sample.candidates_rel
+            self.ax.scatter(c[:, 0], c[:, 1], c='red', s=40, marker='o', alpha=0.6, zorder=5)
+        self.ax.plot(0, 0, 's', color='green', ms=8, zorder=12)
+        self.ax.set_xlabel('East (km)')
+        self.ax.set_ylabel('North (km)')
+        self.ax.set_aspect('equal')
+        self.ax.legend(fontsize=7, loc='best')
+        self.ax.grid(True, alpha=0.3)
+        self.ax.set_title(f"{sample.sample_id[:30]}")
+        self.fig.tight_layout()
+        self.canvas.draw()
+
+
+class MetricsView(QWidget):
+    """误差曲线 + 样本信息"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(2, 2, 2, 2)
+        self.tabs = QTabWidget()
+        layout.addWidget(self.tabs)
+        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+        from matplotlib.figure import Figure
+        self.error_fig = Figure(figsize=(5, 3), dpi=100)
+        self.error_ax = self.error_fig.add_subplot(111)
+        self.error_canvas = FigureCanvasQTAgg(self.error_fig)
+        self.tabs.addTab(self.error_canvas, "误差曲线")
+        self.info_label = QLabel("选择样本")
+        self.info_label.setWordWrap(True)
+        self.info_label.setStyleSheet("font-family: monospace; font-size: 11px; padding: 8px;")
+        scroll = QScrollArea()
+        scroll.setWidget(self.info_label)
+        scroll.setWidgetResizable(True)
+        self.tabs.addTab(scroll, "样本信息")
+
+    def update_error_curve(self, sample, predictions, model_visibility):
+        self.error_ax.clear()
+        if sample is None or sample.future_rel is None or len(sample.future_rel) == 0:
+            self.error_canvas.draw()
+            return
+        gt = sample.future_rel
+        has = False
+        for mn, pred in predictions.items():
+            if not model_visibility.get(mn, True) or pred is None or len(pred) < 2:
+                continue
+            n = min(len(pred), len(gt))
+            err = np.linalg.norm(pred[:n] - gt[:n], axis=1) * 1000
+            self.error_ax.plot(range(n), err, '-', color=MODEL_COLORS.get(mn, '#888'),
+                               label=mn, lw=1.2)
+            has = True
+        if has:
+            self.error_ax.legend(fontsize=7)
+        self.error_ax.set_xlabel('Step')
+        self.error_ax.set_ylabel('Error (m)')
+        self.error_ax.grid(True, alpha=0.3)
+        self.error_fig.tight_layout()
+        self.error_canvas.draw()
+
+    def update_info(self, sample):
+        if sample is None:
+            self.info_label.setText("选择样本")
+            return
+        lines = [
+            f"ID:       {sample.sample_id}",
+            f"Intent:   {sample.intent}",
+            f"Vehicle:  {sample.vehicle_type}",
+            f"Sinuos:   {sample.sinuosity:.3f}",
+            f"Dist:     {sample.total_distance_km:.1f} km",
+            f"History:  {len(sample.history_rel)} steps",
+            f"Future:   {len(sample.future_rel)} steps",
+            f"Goal:     ({sample.goal_rel[0]:.1f}, {sample.goal_rel[1]:.1f}) km",
+            f"LastObs:  E={sample.last_obs_utm[0]:.0f} N={sample.last_obs_utm[1]:.0f}",
+            f"EnvMap:   {sample.env_map.shape if sample.env_map.ndim > 1 else 'N/A'}",
+        ]
+        self.info_label.setText('\n'.join(lines))
+
+
+class AnalysisTab(QWidget):
+    """交互式样本分析标签页"""
+
+    def __init__(self, main_window):
+        super().__init__()
+        self.mw = main_window
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(2, 2, 2, 2)
+
+        # 左侧控制面板
+        left = QWidget()
+        left.setFixedWidth(270)
+        ll = QVBoxLayout(left)
+        ll.setContentsMargins(2, 2, 2, 2)
+        ll.setSpacing(4)
+
+        # 区域
+        rg = QGroupBox("区域")
+        rgl = QVBoxLayout(rg)
+        self.region_combo = QComboBox()
+        self.region_combo.currentTextChanged.connect(
+            lambda r: self.mw.load_region(r) if r else None)
+        rgl.addWidget(self.region_combo)
+        self.region_info = QLabel("未加载")
+        self.region_info.setStyleSheet("color: #888; font-size: 11px;")
+        rgl.addWidget(self.region_info)
+        ll.addWidget(rg)
+
+        # Phase
+        pg = QGroupBox("Phase")
+        pgl = QVBoxLayout(pg)
+        self.phase_group = QButtonGroup(self)
+        for i, (key, label) in enumerate([
+            ('P1a', '1a 精确终点'), ('P1b', '1b OOD'),
+            ('P2a', '2a σ=10km'), ('P3a', '3a 无先验'),
+        ]):
+            rb = QRadioButton(label)
+            rb.setProperty('phase_key', key)
+            self.phase_group.addButton(rb, i)
+            pgl.addWidget(rb)
+            if key == 'P1a':
+                rb.setChecked(True)
+        self.phase_group.buttonClicked.connect(
+            lambda btn: self.mw.set_phase(btn.property('phase_key')))
+        ll.addWidget(pg)
+
+        # 模型
+        mg = QGroupBox("模型")
+        mgl = QVBoxLayout(mg)
+        self.model_checks = {}
+        default_on = {'V6R_Robust', 'V7_ConfGate', 'V3_Waypoint'}
+        for name, chex in MODEL_COLORS.items():
+            cb = QCheckBox(name)
+            r, g, b = hex_to_rgb(chex)
+            cb.setStyleSheet(f"QCheckBox {{ color: rgb({r},{g},{b}); }}")
+            cb.setChecked(name in default_on)
+            cb.stateChanged.connect(
+                lambda st, mn=name: self.mw.set_model_visibility(
+                    mn, st == Qt.CheckState.Checked.value))
+            mgl.addWidget(cb)
+            self.model_checks[name] = cb
+        ll.addWidget(mg)
+
+        # 过滤
+        fg = QGroupBox("过滤")
+        fgl = QVBoxLayout(fg)
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("搜索ID...")
+        self.search_edit.textChanged.connect(lambda: self.mw.refresh_sample_list())
+        fgl.addWidget(self.search_edit)
+        self.sort_combo = QComboBox()
+        self.sort_combo.addItems(['默认', '曲折度↑', '曲折度↓', '距离↑', '距离↓'])
+        self.sort_combo.currentTextChanged.connect(lambda: self.mw.refresh_sample_list())
+        fgl.addWidget(self.sort_combo)
+        ll.addWidget(fg)
+
+        # 样本列表
+        sg = QGroupBox("样本")
+        sgl = QVBoxLayout(sg)
+        self.sample_list = QListWidget()
+        self.sample_list.currentRowChanged.connect(self._on_sample)
+        sgl.addWidget(self.sample_list)
+        self.sample_count = QLabel("0")
+        self.sample_count.setStyleSheet("color: #888; font-size: 11px;")
+        sgl.addWidget(self.sample_count)
+        ll.addWidget(sg, stretch=1)
+
+        self.metrics_label = QLabel("选择样本")
+        self.metrics_label.setWordWrap(True)
+        self.metrics_label.setStyleSheet("font-size: 10px; font-family: monospace;")
+        ll.addWidget(self.metrics_label)
+        layout.addWidget(left)
+
+        # 右侧可视化
+        right = QSplitter(Qt.Orientation.Vertical)
+        top = QSplitter(Qt.Orientation.Horizontal)
+        self.map_view = MapView()
+        self.traj_view = TrajectoryView()
+        top.addWidget(self.map_view)
+        top.addWidget(self.traj_view)
+        top.setSizes([600, 400])
+
+        bottom = QSplitter(Qt.Orientation.Horizontal)
+        self.env_view = EnvChannelView()
+        self.metrics_view = MetricsView()
+        bottom.addWidget(self.env_view)
+        bottom.addWidget(self.metrics_view)
+        bottom.setSizes([500, 500])
+
+        right.addWidget(top)
+        right.addWidget(bottom)
+        right.setSizes([550, 350])
+        layout.addWidget(right, stretch=1)
+
+    def populate_regions(self, regions):
+        self.region_combo.blockSignals(True)
+        self.region_combo.clear()
+        self.region_combo.addItems(regions)
+        self.region_combo.blockSignals(False)
+
+    def populate_samples(self, samples):
+        self.sample_list.clear()
+        search = self.search_edit.text().strip().lower()
+        sort_mode = self.sort_combo.currentText()
+        filtered = [s for s in samples if not search or search in s.sample_id.lower()]
+        if '曲折度↑' in sort_mode:
+            filtered.sort(key=lambda s: s.sinuosity)
+        elif '曲折度↓' in sort_mode:
+            filtered.sort(key=lambda s: s.sinuosity, reverse=True)
+        elif '距离↑' in sort_mode:
+            filtered.sort(key=lambda s: s.total_distance_km)
+        elif '距离↓' in sort_mode:
+            filtered.sort(key=lambda s: s.total_distance_km, reverse=True)
+        for s in filtered:
+            txt = f"{s.sample_id[:25]}  sin={s.sinuosity:.2f}  d={s.total_distance_km:.0f}km"
+            item = QListWidgetItem(txt)
+            item.setData(Qt.ItemDataRole.UserRole, s.sample_id)
+            self.sample_list.addItem(item)
+        self.sample_count.setText(f"{len(filtered)}/{len(samples)}")
+
+    def update_views(self, sample, predictions, model_visibility, region_data):
+        if sample is None:
+            return
+        if region_data and sample.last_obs_utm != (0.0, 0.0):
+            patches = region_data.extract_patch(sample.last_obs_utm, 140.0, 512)
+            self.map_view.set_patches(patches, sample.last_obs_utm, 140.0)
+        self.map_view.canvas.set_trajectories(
+            history_rel=sample.history_rel, future_rel=sample.future_rel,
+            candidates_rel=sample.candidates_rel, predictions=predictions)
+        for mn, vis in model_visibility.items():
+            self.map_view.canvas.set_model_visibility(mn, vis)
+        self.traj_view.update_plot(sample, predictions, model_visibility)
+        self.env_view.update_env(sample)
+        self.metrics_view.update_error_curve(sample, predictions, model_visibility)
+        self.metrics_view.update_info(sample)
+
+    def _on_sample(self, row):
+        if row < 0:
+            return
+        item = self.sample_list.item(row)
+        self.mw.select_sample(item.data(Qt.ItemDataRole.UserRole))

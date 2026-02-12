@@ -28,6 +28,7 @@ class EnvironmentDataLoader:
         self.slope = None
         self.aspect = None
         self.lulc = None
+        self.road = None
         
         self._load_data()
     
@@ -52,6 +53,14 @@ class EnvironmentDataLoader:
             with rasterio.open(self.data_dir / 'lulc_utm.tif') as src:
                 self.lulc = src.read(1).astype(np.uint8)
             
+            # 加载 Road
+            road_path = self.data_dir / 'road_utm.tif'
+            if road_path.exists():
+                with rasterio.open(road_path) as src:
+                    self.road = src.read(1).astype(np.float32)
+            else:
+                self.road = (self.lulc == 80).astype(np.float32)
+            
             print(f"✓ 成功加载 {self.region} 环境数据")
             print(f"  - DEM shape: {self.dem.shape}")
             print(f"  - Slope shape: {self.slope.shape}")
@@ -62,13 +71,17 @@ class EnvironmentDataLoader:
             raise RuntimeError(f"加载环境数据失败: {e}")
     
     def extract_patch(self, center_utm: Tuple[float, float], 
+                     history_abs: Optional[np.ndarray] = None,
+                     candidates_abs: Optional[np.ndarray] = None,
                      patch_size: int = 128, 
                      resolution: float = 30.0) -> torch.Tensor:
         """
         提取以给定 UTM 坐标为中心的环境数据块
         
         Args:
-            center_utm: (easting, northing) UTM 坐标
+            center_utm: (easting, northing) UTM 坐标 (中心点)
+            history_abs: (seq_len, 2) 绝对 UTM 坐标历史轨迹 (用于生成热力图)
+            candidates_abs: (num_goals, 2) 绝对 UTM 坐标候选目标 (用于生成目标地图)
             patch_size: 输出块大小（像素）
             resolution: 分辨率（米/像素）
         
@@ -92,14 +105,21 @@ class EnvironmentDataLoader:
         aspect_patch = self.aspect[row_start:row_end, col_start:col_end]
         lulc_patch = self.lulc[row_start:row_end, col_start:col_end]
         
-        # 调整大小到 patch_size
+        # 统一大小到 patch_size (处理边缘不一致情况)
         from scipy.ndimage import zoom
-        if dem_patch.shape[0] != patch_size or dem_patch.shape[1] != patch_size:
-            zoom_factor = (patch_size / dem_patch.shape[0], patch_size / dem_patch.shape[1])
-            dem_patch = zoom(dem_patch, zoom_factor, order=1)
-            slope_patch = zoom(slope_patch, zoom_factor, order=1)
-            aspect_patch = zoom(aspect_patch, zoom_factor, order=1)
-            lulc_patch = zoom(lulc_patch, zoom_factor, order=0)  # 最近邻插值
+        
+        def resize_patch(p, size, order=1):
+            if p.shape[0] == 0 or p.shape[1] == 0:
+                return np.zeros((size, size), dtype=p.dtype)
+            if p.shape[0] != size or p.shape[1] != size:
+                zf = (size / p.shape[0], size / p.shape[1])
+                return zoom(p, zf, order=order)
+            return p
+
+        dem_patch = resize_patch(dem_patch, patch_size, order=1)
+        slope_patch = resize_patch(slope_patch, patch_size, order=1)
+        aspect_patch = resize_patch(aspect_patch, patch_size, order=1)
+        lulc_patch = resize_patch(lulc_patch, patch_size, order=0)
         
         # 构建 18 通道特征
         channels = []
@@ -127,16 +147,35 @@ class EnvironmentDataLoader:
         tree_cover = (lulc_patch == 10).astype(np.float32)
         channels.append(tree_cover)
         
-        # 6. Road (1 通道) - 暂时用 LULC=80 (人工表面) 近似
-        road = (lulc_patch == 80).astype(np.float32)
-        channels.append(road)
+        # 6. Road (1 通道) - 从road_utm.tif读取
+        road_patch = self.road[row_start:row_end, col_start:col_end]
+        road_patch = resize_patch(road_patch, patch_size, order=0)
+        channels.append(road_patch)
         
-        # 7. History heatmap (1 通道) - 训练时会动态添加，这里先填充0
-        history_heatmap = np.zeros_like(dem_patch)
+        # 7. History heatmap (1 通道) - 动态生成 (带高斯模糊增强泛化)
+        history_heatmap = np.zeros((patch_size, patch_size), dtype=np.float32)
+        if history_abs is not None:
+            for pt in history_abs:
+                p_col, p_row = ~self.transform * (pt[0], pt[1])
+                local_row = int((p_row - (row - half_size)) * (patch_size / (half_size * 2)))
+                local_col = int((p_col - (col - half_size)) * (patch_size / (half_size * 2)))
+                if 0 <= local_row < patch_size and 0 <= local_col < patch_size:
+                    # 绘制 3x3 响应区域而非单点，提升 CNN 捕捉能力
+                    history_heatmap[max(0, local_row-1):min(patch_size, local_row+2), 
+                                    max(0, local_col-1):min(patch_size, local_col+2)] = 1.0
         channels.append(history_heatmap)
         
-        # 8. Candidate goal map (1 通道) - 训练时会动态添加，这里先填充0
-        goal_map = np.zeros_like(dem_patch)
+        # 8. Candidate goal map (1 通道) - 动态生成 (带高斯模糊增强泛化)
+        goal_map = np.zeros((patch_size, patch_size), dtype=np.float32)
+        if candidates_abs is not None:
+            for pt in candidates_abs:
+                p_col, p_row = ~self.transform * (pt[0], pt[1])
+                local_row = int((p_row - (row - half_size)) * (patch_size / (half_size * 2)))
+                local_col = int((p_col - (col - half_size)) * (patch_size / (half_size * 2)))
+                if 0 <= local_row < patch_size and 0 <= local_col < patch_size:
+                    # 目标点使用更大的 5x5 响应区域，作为强空间引导
+                    goal_map[max(0, local_row-2):min(patch_size, local_row+3), 
+                             max(0, local_col-2):min(patch_size, local_col+3)] = 1.0
         channels.append(goal_map)
         
         # 堆叠成 (18, H, W)
@@ -144,33 +183,49 @@ class EnvironmentDataLoader:
         
         return torch.from_numpy(env_map)
     
-    def get_batch_env_maps(self, positions: np.ndarray, 
-                          patch_size: int = 128) -> torch.Tensor:
+    def get_features_at_coords(self, coords_utm: np.ndarray) -> np.ndarray:
         """
-        批量提取环境数据
+        提取给定坐标点的 26 维环境特征 (用于对齐论文表 4.2)
         
         Args:
-            positions: (batch_size, 2) UTM 坐标数组
-            patch_size: 块大小
-        
+            coords_utm: (seq_len, 2) UTM 坐标
+            
         Returns:
-            env_maps: (batch_size, 18, patch_size, patch_size)
+            features: (seq_len, 26) 特征矩阵
         """
-        batch_size = positions.shape[0]
-        env_maps = []
+        seq_len = coords_utm.shape[0]
+        features = np.zeros((seq_len, 26), dtype=np.float32)
         
-        for i in range(batch_size):
-            try:
-                env_map = self.extract_patch(
-                    center_utm=(positions[i, 0], positions[i, 1]),
-                    patch_size=patch_size
-                )
-                env_maps.append(env_map)
-            except Exception as e:
-                warnings.warn(f"提取环境数据失败 (位置 {i}): {e}，使用零填充")
-                env_maps.append(torch.zeros(18, patch_size, patch_size))
+        # 1. 提取基础运动学特征 (需要计算)
+        # 注意：这里只填充坐标，速度/加速度/航向在 Dataset 中计算
+        features[:, 0:2] = coords_utm  # x, y
         
-        return torch.stack(env_maps, dim=0)
+        # 2. 提取环境栅格特征
+        for i in range(seq_len):
+            col, row = ~self.transform * (coords_utm[i, 0], coords_utm[i, 1])
+            col, row = int(col), int(row)
+            
+            # 边界检查
+            if 0 <= row < self.dem.shape[0] and 0 <= col < self.dem.shape[1]:
+                # 地形 (4维)
+                features[i, 10] = (self.dem[row, col] - self.dem.mean()) / (self.dem.std() + 1e-6) # dem_agg
+                features[i, 11] = self.slope[row, col] / 90.0 # slope_agg
+                aspect_rad = np.deg2rad(self.aspect[row, col])
+                features[i, 12] = np.sin(aspect_rad) # aspect_sin_agg
+                features[i, 13] = np.cos(aspect_rad) # aspect_cos_agg
+                
+                # 地表 (11维)
+                lulc_val = self.lulc[row, col]
+                lulc_classes = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 255]
+                for idx, cls in enumerate(lulc_classes):
+                    if lulc_val == cls:
+                        features[i, 14 + idx] = 1.0
+                
+                # 道路 (1维)
+                if self.road[row, col] > 0:
+                    features[i, 25] = 1.0
+                    
+        return features
 
 
 # 全局缓存

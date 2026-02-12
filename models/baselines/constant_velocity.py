@@ -16,8 +16,7 @@ class ConstantVelocity(BasePredictor):
     """
     def __init__(self, config: Dict):
         super().__init__(config)
-        # CV模型无需训练参数，但为了接口统一，添加一个虚拟参数
-        self.dummy = nn.Parameter(torch.zeros(1))
+        # CV模型无需训练参数
 
     def forward(self, history: torch.Tensor, env_map: torch.Tensor = None, **kwargs) -> torch.Tensor:
         """

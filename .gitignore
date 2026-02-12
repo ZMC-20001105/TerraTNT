@@ -1,80 +1,73 @@
-# Python
+# ── Python ──
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
 *.egg
 
-# Virtual Environment
+# ── Virtual Environments ──
 venv/
 venv-torch/
 ENV/
 env/
 
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IDE
+# ── IDE ──
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# Data files (too large for git)
+# ── Data (too large for git) ──
 data/raw/
 data/processed/
+data/osm/
 *.tif
 *.pkl
 *.h5
 *.hdf5
 *.nc
+*.pbf
 
-# Model checkpoints
-models/checkpoints/
+# ── Model weights ──
+runs/
 *.pth
 *.pt
 
-# Logs
-logs/*.log
+# ── Logs ──
 *.log
+*.pid
 
-# Results
-results/visualizations/*.png
-results/visualizations/*.jpg
-results/predictions/
-results/evaluation/
+# ── Outputs & cache ──
+outputs/
+cache/
 
-# Temporary files
+# ── Temporary / trash ──
+_trash/
 tmp/
 temp/
 *.tmp
 
-# OS
+# ── OS ──
 .DS_Store
 Thumbs.db
 
-# Google Earth Engine credentials
-*.json
-!config.json
-!package.json
+# ── Credentials (keep GEE key out of repo) ──
+gen-lang-client-*.json
 
-# Large data files
+# ── Large binary files ──
 *.zip
 *.tar.gz
 *.rar
+*.deb
+*.sh.1
+miniconda.sh
+*.docx
+
+# ── Generated images in root ──
+*.png
+!docs/*.png
+
+# ── Jupyter ──
+.ipynb_checkpoints

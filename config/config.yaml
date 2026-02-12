@@ -236,6 +236,8 @@ trajectory_generation:
       time: 2.0
       elevation_gain: 0.5
       terrain_difficulty: 1.5
+
+  sample_window_step: 5
   
   # 代价地图配置
   cost_map:
@@ -255,6 +257,54 @@ trajectory_generation:
     slope_penalty:
       threshold: 30  # degrees
       max_slope: 45  # degrees (超过则禁止)
+
+    # 道路偏好（LULC=80），倍率越小越偏好走道路
+    road_cost_multiplier_by_vehicle:
+      type1: 0.2
+      type2: 0.15
+      type3: 0.1
+      type4: 0.25
+
+    road_preference:
+      enabled: true
+      # 旧版二值道路代价（仅在无 road_graded_utm.tif 时回退使用）
+      road_cost_floor_by_vehicle:
+        type1: 0.001
+        type2: 0.001
+        type3: 0.001
+        type4: 0.002
+      road_effective_buffer_m: 0.0
+      # 分级道路代价（优先使用 road_graded_utm.tif）
+      # high=motorway/trunk/primary, medium=secondary/tertiary, low=其余
+      graded_cost_floor:
+        high: 0.01
+        medium: 0.3
+        low: 0.8
+
+    slope_penalty_exp_by_intent:
+      intent1: 1.2
+      intent2: 1.0
+      intent3: 2.0
+
+  sampling:
+    prefer_road: true
+    road_buffer_m: 300.0
+    force_on_road: false
+    estimated_circuity: 1.6
+
+  quality_filter:
+    enabled: true
+    max_attempts: 5
+    sinuosity_min: 1.08
+    total_turn_min_deg: 120.0
+    sinuosity_min_by_intent:
+      intent1: 1.06
+      intent2: 1.10
+      intent3: 1.15
+    total_turn_min_deg_by_intent:
+      intent1: 90.0
+      intent2: 120.0
+      intent3: 180.0
   
   # 合成轨迹数量
   num_synthetic: 1000
@@ -355,9 +405,38 @@ plotting:
     default_size: [10, 6]  # inches
     large_size: [14, 8]
     small_size: [6, 4]
+
+  layout:
+    square_panels: true
+    panel_size_inch: 4.5
+
+  trajectory_plot:
+    background:
+      enabled: true
+      source: 'processed_utm_grid'
+      layer: 'dem'
+      alpha: 0.55
+      coverage_mode: 'auto'
+      min_coverage_km: 100.0
+      padding_km: 5.0
   
   # 中文字体配置
   chinese_font:
+    enabled: true
+    paths:
+      - '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'
+      - '/usr/share/fonts/truetype/arphic/ukai.ttc'
+      - '/usr/share/fonts/truetype/arphic/uming.ttc'
+    families:
+      - 'Noto Sans CJK SC'
+    fallback_families:
+      - 'Noto Sans CJK SC'
+      - 'Noto Sans CJK TC'
+      - 'Noto Sans CJK JP'
+      - 'AR PL UKai CN'
+      - 'AR PL UMing CN'
+      - 'Droid Sans Fallback'
+      - 'DejaVu Sans'
     path: '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'
     family: 'Noto Sans CJK SC'
   

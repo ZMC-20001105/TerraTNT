@@ -90,27 +90,64 @@ class PlotConfig:
         rcParams['ytick.labelsize'] = font_config.get('label_size', 11)
         
         # 支持中文显示 - 使用Noto Sans CJK字体
-        rcParams['font.sans-serif'] = ['Noto Sans CJK SC', 'Noto Sans CJK TC', 'DejaVu Sans', 'Arial']
+        chinese_font_cfg = cfg.get('plotting.chinese_font', {})
+        enabled = chinese_font_cfg.get('enabled', True)
+        families = chinese_font_cfg.get('families')
+        if not families:
+            family = chinese_font_cfg.get('family')
+            families = [family] if family else []
+        fallback_families = chinese_font_cfg.get(
+            'fallback_families',
+            ['Noto Sans CJK SC', 'Noto Sans CJK TC', 'Noto Sans CJK JP', 'AR PL UKai CN', 'AR PL UMing CN', 'Droid Sans Fallback', 'DejaVu Sans', 'Arial']
+        )
+        sans_serif_list = [f for f in (families + fallback_families) if f]
+        if enabled and sans_serif_list:
+            rcParams['font.family'] = 'sans-serif'
+        rcParams['font.sans-serif'] = sans_serif_list if sans_serif_list else ['DejaVu Sans', 'Arial']
         rcParams['axes.unicode_minus'] = False
         
         # 加载中文字体
         from matplotlib.font_manager import FontProperties
-        from pathlib import Path
-        font_path = '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'
-        if Path(font_path).exists():
-            self.chinese_font = FontProperties(fname=font_path)
-        else:
-            self.chinese_font = None
+        from matplotlib import font_manager
+        font_paths = chinese_font_cfg.get('paths')
+        if not font_paths:
+            font_path = chinese_font_cfg.get('path')
+            font_paths = [font_path] if font_path else []
+        # 常见字体路径兜底
+        font_paths = [p for p in font_paths if p] + [
+            '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+            '/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc',
+            '/usr/share/fonts/truetype/arphic/ukai.ttc',
+            '/usr/share/fonts/truetype/arphic/uming.ttc',
+        ]
+        selected_path = None
+        if enabled:
+            for p in font_paths:
+                try:
+                    if Path(p).exists():
+                        font_manager.fontManager.addfont(p)
+                        if selected_path is None:
+                            selected_path = p
+                except Exception:
+                    continue
+        self.chinese_font = FontProperties(fname=selected_path) if selected_path else None
     
     def setup_figure(self):
         """设置图形参数"""
         fig_config = cfg.get('plotting.figure', {})
+        layout_config = cfg.get('plotting.layout', {})
+        traj_plot_config = cfg.get('plotting.trajectory_plot', {})
         
         self.DPI = fig_config.get('dpi', 300)
         self.FORMAT = fig_config.get('format', 'png')
         self.DEFAULT_SIZE = tuple(fig_config.get('default_size', [10, 6]))
         self.LARGE_SIZE = tuple(fig_config.get('large_size', [14, 8]))
         self.SMALL_SIZE = tuple(fig_config.get('small_size', [6, 4]))
+
+        self.SQUARE_PANELS = bool(layout_config.get('square_panels', True))
+        self.PANEL_SIZE_INCH = float(layout_config.get('panel_size_inch', 4.5))
+
+        self.TRAJ_PLOT = traj_plot_config
         
         # 设置默认 DPI
         rcParams['figure.dpi'] = self.DPI

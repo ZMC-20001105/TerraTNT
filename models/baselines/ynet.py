@@ -51,6 +51,7 @@ class YNet(BasePredictor):
         super(YNet, self).__init__(config)
         self.in_channels = config.get('in_channels', 18)
         self.hidden_dim = config.get('hidden_dim', 256)
+        self.env_coverage_km = float(config.get('env_coverage_km', 140.0))
         
         # 1. 场景语义编码器
         self.scene_encoder = UNetEncoder(self.in_channels, 64)
@@ -89,7 +90,11 @@ class YNet(BasePredictor):
         
         # 为了演示，我们从goal_map中提取最大值作为预测终点
         # 实际实现中会使用KDE或多模态采样
-        goal_coords = self._get_max_coords(goal_map)
+        goal_coords_norm = self._get_max_coords(goal_map) # [0, 1] 归一化坐标
+        
+        # 将归一化地图坐标转换为相对物理 km 坐标（env_map 覆盖 env_coverage_km × env_coverage_km，中心在当前点）
+        # 归一化 [0,1] -> [-env_coverage_km/2, env_coverage_km/2]
+        goal_coords = (goal_coords_norm - 0.5) * self.env_coverage_km
         
         # 轨迹解码 (Endpoint conditioned)
         curr_pos = history[:, -1, :]

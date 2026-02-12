@@ -101,10 +101,10 @@ class TrajectronPP(BasePredictor):
         self.gmm_output = GMM2D(self.hidden_dim, self.num_modes)
         
         # 动力学约束参数
-        self.max_accel = config.get('max_accel', 3.0)  # m/s^2
-        self.dt = config.get('dt', 60.0)  # 采样间隔 (秒)
+        self.max_accel = config.get('max_accel', 3.0) / 1000.0  # m/s^2 -> km/s^2
+        self.dt = config.get('dt', 10.0)  # 采样间隔 (秒), 实际为10s
 
-    def forward(self, history: torch.Tensor, env_map: torch.Tensor, **kwargs) -> torch.Tensor:
+    def forward(self, history: torch.Tensor, env_map: torch.Tensor, future: torch.Tensor = None, teacher_forcing_ratio: float = 0.0, **kwargs) -> torch.Tensor:
         batch_size = history.size(0)
         
         # 编码历史轨迹
@@ -132,7 +132,7 @@ class TrajectronPP(BasePredictor):
             # GMM预测
             gmm_params = self.gmm_output(out.squeeze(1))
             
-            # 取最可能的模式作为预测 (训练时可以用采样)
+            # 取最可能的模式作为预测
             best_mode = gmm_params['log_weights'].argmax(dim=1)
             delta = gmm_params['means'][torch.arange(batch_size), best_mode]
             
@@ -142,6 +142,14 @@ class TrajectronPP(BasePredictor):
             curr_pos = curr_pos + delta
             prev_vel = delta
             predictions.append(curr_pos.unsqueeze(1))
+            
+            # Teacher Forcing
+            if self.training and future is not None and torch.rand(1) < teacher_forcing_ratio:
+                curr_pos = future[:, t, :]
+                if t > 0:
+                    prev_vel = future[:, t, :] - future[:, t-1, :]
+                else:
+                    prev_vel = future[:, 0, :] - history[:, -1, :]
         
         return torch.cat(predictions, dim=1)
 
@@ -181,17 +189,22 @@ class TrajectronPP(BasePredictor):
         return torch.cat(all_samples, dim=1)
 
     def _apply_dynamics(self, delta: torch.Tensor, prev_vel: torch.Tensor) -> torch.Tensor:
-        """应用动力学约束"""
-        # 计算加速度
-        accel = (delta - prev_vel) / self.dt
+        """应用动力学约束 (所有量单位: km, s)"""
+        # delta, prev_vel 是每步位移 (km/step)
+        # 转换为速度 (km/s)
+        vel = delta / self.dt
+        prev_v = prev_vel / self.dt
+        # 加速度 (km/s^2)
+        accel = (vel - prev_v) / self.dt
         accel_mag = torch.norm(accel, dim=-1, keepdim=True)
         
-        # 限制加速度
+        # 限制加速度 (self.max_accel 已转换为 km/s^2)
         scale = torch.clamp(self.max_accel / (accel_mag + 1e-6), max=1.0)
         constrained_accel = accel * scale
         
-        # 重新计算位移
-        return prev_vel + constrained_accel * self.dt
+        # 重新计算速度和位移
+        constrained_vel = prev_v + constrained_accel * self.dt
+        return constrained_vel * self.dt
 
     def _sample_gmm(self, gmm_params: Dict[str, torch.Tensor]) -> torch.Tensor:
         """从GMM分布采样"""

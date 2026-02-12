@@ -93,6 +93,15 @@ def generate_cost_maps(region='bohemian_forest'):
     with rasterio.open(utm_dir / 'slope_utm.tif') as src:
         slope = src.read(1)
     
+    # 读取道路栅格
+    road_utm_path = utm_dir / 'road_utm.tif'
+    if road_utm_path.exists():
+        with rasterio.open(road_utm_path) as src:
+            road_raster = src.read(1)
+    else:
+        logger.warning(f"road_utm.tif不存在，使用LULC==80作为临时道路proxy")
+        road_raster = (lulc == 80).astype(np.float32)
+    
     # 确保尺寸一致
     min_height = min(lulc.shape[0], slope.shape[0])
     min_width = min(lulc.shape[1], slope.shape[1])
@@ -127,6 +136,14 @@ def generate_cost_maps(region='bohemian_forest'):
         'type3': 20,
         'type4': 15
     }
+
+    # 道路偏好（LULC=80），倍率越小越偏好走道路
+    road_mult_by_vehicle = {
+        'type1': 1.0,
+        'type2': 0.8,
+        'type3': 0.6,
+        'type4': 0.4,
+    }
     
     # 创建LULC代价栅格
     lulc_cost = np.ones_like(lulc, dtype=float)
@@ -144,6 +161,12 @@ def generate_cost_maps(region='bohemian_forest'):
             # 坡度代价
             slope_cost = slope * weights['slope']
             cost = cost + slope_cost
+
+            # 道路偏好：降低道路像素代价，鼓励走道路（不同车型强度不同）
+            road_mult = float(road_mult_by_vehicle.get(vtype, 1.0))
+            road_mask = (road_raster > 0)
+            if np.any(road_mask):
+                cost[road_mask] = cost[road_mask] * road_mult
             
             # 不可通行区域设为无穷
             cost[slope > max_slope] = np.inf

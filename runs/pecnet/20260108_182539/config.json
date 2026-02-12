@@ -1,9 +1,0 @@
-{
-  "data_dir": "/home/zmc/\u6587\u6863/programwork/data/processed/synthetic_trajectories/bohemian_forest",
-  "save_dir": "/home/zmc/\u6587\u6863/programwork/runs",
-  "batch_size": 64,
-  "learning_rate": 0.001,
-  "num_epochs": 30,
-  "val_split": 0.2,
-  "patience": 5
-}

@@ -41,9 +41,10 @@ class SocialLSTM(BasePredictor):
         # 输出层
         self.output_layer = nn.Linear(self.hidden_dim, 2)
 
-    def forward(self, history: torch.Tensor, env_map: torch.Tensor = None, **kwargs) -> torch.Tensor:
+    def forward(self, history: torch.Tensor, env_map: torch.Tensor = None, future: torch.Tensor = None, teacher_forcing_ratio: float = 0.0, **kwargs) -> torch.Tensor:
         """
         Social-LSTM不使用环境地图，仅基于历史轨迹预测
+        支持 Teacher Forcing 模式以稳定长序列训练
         """
         batch_size = history.size(0)
         
@@ -57,7 +58,7 @@ class SocialLSTM(BasePredictor):
         curr_pos = history[:, -1, :]
         predictions = []
         
-        for _ in range(self.future_length):
+        for i in range(self.future_length):
             # 嵌入当前位置
             curr_embedded = self.input_embedding(curr_pos).unsqueeze(1)
             
@@ -68,6 +69,10 @@ class SocialLSTM(BasePredictor):
             delta = self.output_layer(out.squeeze(1))
             curr_pos = curr_pos + delta
             predictions.append(curr_pos.unsqueeze(1))
+            
+            # Teacher Forcing: 训练阶段以一定概率使用真实坐标作为下一步输入
+            if self.training and future is not None and torch.rand(1) < teacher_forcing_ratio:
+                curr_pos = future[:, i, :]
         
         return torch.cat(predictions, dim=1)
 

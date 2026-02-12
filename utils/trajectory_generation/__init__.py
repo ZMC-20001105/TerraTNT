@@ -12,14 +12,15 @@ from .passable_mask import PassableMaskGenerator
 from .cost_map import CostMapGenerator
 from .hierarchical_astar import HierarchicalAStarPlanner
 from .path_smoothing import smooth_path
-from .trajectory_generator import TrajectoryGenerator
-from .sampling import sample_start_goal
+from .trajectory_generator_v2 import TrajectoryGeneratorV2
+from .sampling import sample_start_goal, sample_start_goal_v2
 
 __all__ = [
     'PassableMaskGenerator',
     'CostMapGenerator',
     'HierarchicalAStarPlanner',
     'smooth_path',
-    'TrajectoryGenerator',
+    'TrajectoryGeneratorV2',
     'sample_start_goal',
+    'sample_start_goal_v2',
 ]

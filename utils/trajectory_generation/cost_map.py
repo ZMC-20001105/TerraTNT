@@ -20,8 +20,11 @@ from typing import Tuple, Optional, Dict
 import numpy as np
 import rasterio
 from dataclasses import dataclass
+from scipy.ndimage import distance_transform_edt
+from scipy.ndimage import binary_dilation
 
 from config import cfg, get_path
+from utils.trajectory_generation.passable_mask import VEHICLE_MAX_SLOPE
 
 logger = logging.getLogger(__name__)
 
@@ -72,10 +75,19 @@ class CostMapGenerator:
         self.dem = self.dem_src.read(1)
         self.slope = self.slope_src.read(1)
         self.lulc = self.lulc_src.read(1)
+
+        shapes = [self.dem.shape, self.slope.shape, self.lulc.shape]
+        if len({s for s in shapes}) != 1:
+            h = min(s[0] for s in shapes)
+            w = min(s[1] for s in shapes)
+            logger.warning(f"栅格shape不一致，将裁剪到共同尺寸: {(h, w)}; shapes={shapes}")
+            self.dem = self.dem[:h, :w]
+            self.slope = self.slope[:h, :w]
+            self.lulc = self.lulc[:h, :w]
         
         # 处理nodata
         self.dem = np.where(self.dem == -32768, np.nan, self.dem)
-        
+
         self.shape = self.dem.shape
         self.transform = self.dem_src.transform
         self.crs = self.dem_src.crs
@@ -116,23 +128,31 @@ class CostMapGenerator:
                 }.get(lulc_class, str(lulc_class))
                 logger.info(f"  {lulc_name}({lulc_class}): 代价={cost:.1f}, {count}像素")
         
-        # 归一化到0-1（排除不可通行区域）
+        # 不归一化，保留原始代价值，并添加最小基础代价确保高于道路
         passable_mask = cost_map < 900
+        min_terrain_cost = 0.1  # 最小地形代价，确保高于道路代价0.001
         if np.any(passable_mask):
+            # 将原始代价(0.5-2.0)映射到(0.1-2.0)范围，确保最低代价仍为0.1
             min_cost = cost_map[passable_mask].min()
             max_cost = cost_map[passable_mask].max()
-            cost_map[passable_mask] = (cost_map[passable_mask] - min_cost) / (max_cost - min_cost)
+            if max_cost > min_cost:
+                # 归一化到0-1，然后映射到[min_terrain_cost, max_cost]
+                normalized = (cost_map[passable_mask] - min_cost) / (max_cost - min_cost)
+                cost_map[passable_mask] = min_terrain_cost + normalized * (max_cost - min_terrain_cost)
+            else:
+                cost_map[passable_mask] = min_terrain_cost
         
         logger.info(f"  LULC代价范围: {cost_map[passable_mask].min():.3f} ~ {cost_map[passable_mask].max():.3f}")
         
         return cost_map
     
-    def compute_slope_cost_map(self, factors: CostFactors) -> np.ndarray:
+    def compute_slope_cost_map(self, factors: CostFactors, vehicle_type: str = 'type1') -> np.ndarray:
         """
         计算坡度代价图
         
         Args:
             factors: 代价因子
+            vehicle_type: 车辆类型
         
         Returns:
             坡度代价图（归一化到0-1）
@@ -142,12 +162,25 @@ class CostMapGenerator:
         # 坡度代价：与坡度成正比
         slope_cost = self.slope * factors.slope_factor
         
-        # 归一化到0-1
-        max_slope = np.nanmax(slope_cost)
-        if max_slope > 0:
-            slope_cost = slope_cost / max_slope
+        # 映射到[0.1, 1.0]范围，确保最小坡度代价也高于道路
+        # 注意：全图 max_slope 可能被极少数异常/极端值(如 90°)主导，导致大部分坡度惩罚被“压扁”
+        # 这里使用鲁棒分位数（p99）并用车辆最大可爬坡角做上限，避免量纲失真
+        min_terrain_cost = 0.1
+        slope_vals = slope_cost[np.isfinite(slope_cost)]
+        if slope_vals.size > 0:
+            p99 = float(np.percentile(slope_vals, 99))
+        else:
+            p99 = 0.0
         
-        logger.info(f"  坡度代价范围: {np.nanmin(slope_cost):.3f} ~ {np.nanmax(slope_cost):.3f}")
+        v_max = float(VEHICLE_MAX_SLOPE.get(vehicle_type, 30.0)) * float(factors.slope_factor)
+        max_slope_ref = max(0.0, min(v_max, p99))
+        if max_slope_ref > 1e-6:
+            normalized = np.clip(slope_cost / max_slope_ref, 0.0, 1.0)
+            slope_cost = min_terrain_cost + normalized * (1.0 - min_terrain_cost)
+        else:
+            slope_cost = np.full_like(slope_cost, min_terrain_cost)
+        
+        logger.info(f"  坡度代价范围: {slope_cost.min():.3f} ~ {slope_cost.max():.3f}")
         
         return slope_cost
     
@@ -173,12 +206,14 @@ class CostMapGenerator:
         vegetation[self.lulc == 30] = 0.3  # 草地
         
         # 暴露度 = 1 - 植被覆盖
-        exposure = (1.0 - vegetation) * factors.exposure_factor
+        min_terrain_cost = 0.1
+        raw_exposure = 1.0 - vegetation
+        exposure_cost = min_terrain_cost + raw_exposure * (1.0 - min_terrain_cost)
         
-        logger.info(f"  暴露代价范围: {exposure.min():.3f} ~ {exposure.max():.3f}")
+        logger.info(f"  暴露代价范围: {exposure_cost.min():.3f} ~ {exposure_cost.max():.3f}")
         logger.info(f"  平均植被覆盖: {vegetation.mean():.3f}")
         
-        return exposure
+        return exposure_cost
     
     def generate_cost_map(
         self,
@@ -210,13 +245,30 @@ class CostMapGenerator:
         
         # 计算各项代价
         lulc_cost = self.compute_lulc_cost_map()
-        slope_cost = self.compute_slope_cost_map(factors)
+        slope_cost = self.compute_slope_cost_map(factors, vehicle_type=vehicle_type)
         exposure_cost = self.compute_exposure_cost_map(factors)
+
+        # 坡度非线性增强（使山地代价更高，更符合“避陡坡”意图）
+        # 论文里 slope 在 intent3 权重更大，这里进一步引入幂次增强差异
+        slope_exp_by_intent = cfg.get('trajectory_generation.cost_map.slope_penalty_exp_by_intent', {})
+        slope_exp = float(slope_exp_by_intent.get(intent, 1.0))
+        if slope_exp != 1.0:
+            slope_cost = np.power(np.clip(slope_cost, 0.0, 1.0), slope_exp)
         
         # 加载可通行域掩码
         passable_mask_path = Path(get_path('paths.processed.utm_grid')) / self.region / f'passable_mask_{vehicle_type}.tif'
         with rasterio.open(passable_mask_path) as src:
             passable_mask = src.read(1).astype(bool)
+
+        shapes = [passable_mask.shape, lulc_cost.shape, slope_cost.shape, exposure_cost.shape]
+        if len({s for s in shapes}) != 1:
+            h = min(s[0] for s in shapes)
+            w = min(s[1] for s in shapes)
+            logger.warning(f"代价/掩码shape不一致，将裁剪到共同尺寸: {(h, w)}; shapes={shapes}")
+            passable_mask = passable_mask[:h, :w]
+            lulc_cost = lulc_cost[:h, :w]
+            slope_cost = slope_cost[:h, :w]
+            exposure_cost = exposure_cost[:h, :w]
         
         logger.info(f"\n加载可通行域掩码: {passable_mask_path.name}")
         logger.info(f"  可通行像素: {np.sum(passable_mask)} ({np.sum(passable_mask)/passable_mask.size*100:.2f}%)")
@@ -229,12 +281,62 @@ class CostMapGenerator:
             weights['exp'] * exposure_cost
         )
         
-        # 归一化到0-1
-        if np.any(passable_mask):
-            min_cost = cost_map[passable_mask].min()
-            max_cost = cost_map[passable_mask].max()
-            if max_cost > min_cost:
-                cost_map[passable_mask] = (cost_map[passable_mask] - min_cost) / (max_cost - min_cost)
+        # 不做归一化，保留原始加权代价
+
+        # 道路偏好（分级道路）：
+        # 优先使用 road_graded_utm.tif（1=高等级, 2=中等级, 3=低等级）
+        # 不同等级给不同代价折扣，低等级道路不再享受极低代价
+        road_graded_path = Path(get_path('paths.processed.utm_grid')) / self.region / 'road_graded_utm.tif'
+        road_utm_path = Path(get_path('paths.processed.utm_grid')) / self.region / 'road_utm.tif'
+
+        road_pref_cfg = cfg.get('trajectory_generation.cost_map.road_preference', {})
+        road_pref_enabled = bool(road_pref_cfg.get('enabled', False))
+
+        if road_pref_enabled and road_graded_path.exists():
+            with rasterio.open(road_graded_path) as src:
+                road_graded = src.read(1)
+            if road_graded.shape != cost_map.shape:
+                h = min(road_graded.shape[0], cost_map.shape[0])
+                w = min(road_graded.shape[1], cost_map.shape[1])
+                road_graded = road_graded[:h, :w]
+                cost_map = cost_map[:h, :w]
+                passable_mask = passable_mask[:h, :w]
+
+            # 分级代价折扣（可通过config覆盖）
+            graded_floor = road_pref_cfg.get('graded_cost_floor', {})
+            high_floor = float(graded_floor.get('high', 0.001))    # motorway/trunk/primary
+            medium_floor = float(graded_floor.get('medium', 0.15)) # secondary/tertiary
+            low_floor = float(graded_floor.get('low', 0.5))        # track/residential/etc
+
+            mask_high = (road_graded == 1)
+            mask_medium = (road_graded == 2)
+            mask_low = (road_graded == 3)
+
+            if np.any(mask_high):
+                cost_map[mask_high] = np.minimum(cost_map[mask_high], high_floor)
+            if np.any(mask_medium):
+                cost_map[mask_medium] = np.minimum(cost_map[mask_medium], medium_floor)
+            if np.any(mask_low):
+                cost_map[mask_low] = np.minimum(cost_map[mask_low], low_floor)
+
+            logger.info(f"  分级道路代价: high={high_floor}, medium={medium_floor}, low={low_floor}")
+            logger.info(f"  道路像素: high={mask_high.sum()}, medium={mask_medium.sum()}, low={mask_low.sum()}")
+
+        elif road_pref_enabled and road_utm_path.exists():
+            # 回退到旧的二值道路（兼容）
+            with rasterio.open(road_utm_path) as src:
+                road_raster = src.read(1)
+            if road_raster.shape != cost_map.shape:
+                h = min(road_raster.shape[0], cost_map.shape[0])
+                w = min(road_raster.shape[1], cost_map.shape[1])
+                road_raster = road_raster[:h, :w]
+                cost_map = cost_map[:h, :w]
+                passable_mask = passable_mask[:h, :w]
+            road_mask = (road_raster > 0)
+            floor_by_vehicle = road_pref_cfg.get('road_cost_floor_by_vehicle', {})
+            road_floor = float(floor_by_vehicle.get(vehicle_type, 0.0))
+            if road_floor > 0.0 and np.any(road_mask):
+                cost_map[road_mask] = road_floor
         
         # 不可通行区域设为无穷大
         cost_map[~passable_mask] = np.inf

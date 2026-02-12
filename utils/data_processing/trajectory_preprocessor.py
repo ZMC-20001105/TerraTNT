@@ -55,6 +55,14 @@ class EnvironmentMapGenerator:
         with rasterio.open(self.utm_dir / 'lulc_utm.tif') as src:
             self.lulc = src.read(1)
         
+        # 加载道路栅格
+        road_path = self.utm_dir / 'road_utm.tif'
+        if road_path.exists():
+            with rasterio.open(road_path) as src:
+                self.road = src.read(1)
+        else:
+            self.road = (self.lulc == 80).astype(np.float32)
+        
         logger.info(f"  DEM尺寸: {self.dem.shape}")
         logger.info(f"  分辨率: {self.transform.a}m")
         
@@ -92,6 +100,10 @@ class EnvironmentMapGenerator:
         col_max = min(self.dem.shape[1], col_max)
         row_min = max(0, row_min)
         row_max = min(self.dem.shape[0], row_max)
+
+        if row_min >= row_max or col_min >= col_max:
+            env_map = np.zeros((18, self.map_size, self.map_size), dtype=np.float32)
+            return env_map
         
         # 提取局部栅格
         dem_local = self.dem[row_min:row_max, col_min:col_max]
@@ -101,13 +113,36 @@ class EnvironmentMapGenerator:
         
         # 调整大小到128x128
         from scipy.ndimage import zoom
-        zoom_factor = (self.map_size / dem_local.shape[0], 
-                      self.map_size / dem_local.shape[1])
-        
-        dem_resized = zoom(dem_local, zoom_factor, order=1)
-        slope_resized = zoom(slope_local, zoom_factor, order=1)
-        aspect_resized = zoom(aspect_local, zoom_factor, order=1)
-        lulc_resized = zoom(lulc_local, zoom_factor, order=0)  # 最近邻插值
+
+        def _resize_to_map(arr: np.ndarray, order: int) -> np.ndarray:
+            if arr.size == 0 or arr.shape[0] <= 0 or arr.shape[1] <= 0:
+                return np.zeros((self.map_size, self.map_size), dtype=np.float32)
+
+            zf = (self.map_size / float(arr.shape[0]), self.map_size / float(arr.shape[1]))
+            out = zoom(arr, zf, order=order)
+            if out.shape != (self.map_size, self.map_size):
+                out2 = np.zeros((self.map_size, self.map_size), dtype=out.dtype)
+                src_y0 = max(0, (out.shape[0] - self.map_size) // 2)
+                src_x0 = max(0, (out.shape[1] - self.map_size) // 2)
+                dst_y0 = max(0, (self.map_size - out.shape[0]) // 2)
+                dst_x0 = max(0, (self.map_size - out.shape[1]) // 2)
+                h = min(self.map_size, out.shape[0])
+                w = min(self.map_size, out.shape[1])
+                out2[dst_y0:dst_y0 + h, dst_x0:dst_x0 + w] = out[src_y0:src_y0 + h, src_x0:src_x0 + w]
+                out = out2
+
+            return out.astype(np.float32)
+
+        dem_resized = _resize_to_map(dem_local, order=1)
+        slope_resized = _resize_to_map(slope_local, order=1)
+        aspect_resized = _resize_to_map(aspect_local, order=1)
+        lulc_resized = _resize_to_map(lulc_local, order=0)  # 最近邻插值
+        if np.issubdtype(lulc_resized.dtype, np.floating):
+            lulc_resized = np.rint(lulc_resized)
+        lulc_resized = lulc_resized.astype(np.int32, copy=False)
+        lulc_classes = [10, 20, 30, 40, 50, 60, 80, 90, 100, 255]
+        known_mask = np.isin(lulc_resized, np.array(lulc_classes, dtype=np.int32))
+        lulc_resized = np.where(known_mask, lulc_resized, 255)
         
         # 生成18通道地图
         channels = []
@@ -127,16 +162,20 @@ class EnvironmentMapGenerator:
         channels.append(np.cos(aspect_rad))
         
         # 通道5-14: LULC one-hot编码 (10类)
-        lulc_codes = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
-        for code in lulc_codes:
-            lulc_channel = (lulc_resized == code).astype(np.float32)
+        for code in lulc_classes:
+            lulc_channel = (lulc_resized == int(code)).astype(np.float32)
             channels.append(lulc_channel)
+
+        # 通道15: Tree cover (LULC=10)
+        tree_cover = (lulc_resized == 10).astype(np.float32)
+        channels.append(tree_cover)
+
+        # 通道16: 道路层 (从road_utm.tif)
+        road_local = self.road[row_min:row_max, col_min:col_max]
+        road_resized = _resize_to_map(road_local, order=0)
+        channels.append(road_resized)
         
-        # 通道15: 道路层 (LULC=80为人工表面)
-        road_channel = (lulc_resized == 80).astype(np.float32)
-        channels.append(road_channel)
-        
-        # 通道16: 历史轨迹热力图
+        # 通道17: 历史轨迹热力图
         history_heatmap = np.zeros((self.map_size, self.map_size), dtype=np.float32)
         if history_points is not None and len(history_points) > 0:
             for point in history_points:
@@ -158,7 +197,7 @@ class EnvironmentMapGenerator:
         history_heatmap = np.clip(history_heatmap, 0, 1)
         channels.append(history_heatmap)
         
-        # 通道17: 候选目标地图
+        # 通道18: 候选目标地图
         goal_map = np.zeros((self.map_size, self.map_size), dtype=np.float32)
         if goal_utm is not None:
             local_x = (goal_utm[0] - x_min) / self.pixel_resolution
@@ -176,10 +215,6 @@ class EnvironmentMapGenerator:
                             goal_map[r, c] = np.exp(-dist**2 / 4)
         
         channels.append(goal_map)
-        
-        # 通道18: 缺失值标记 (全0表示无缺失)
-        missing_mask = np.zeros((self.map_size, self.map_size), dtype=np.float32)
-        channels.append(missing_mask)
         
         # 堆叠为 (18, 128, 128)
         env_map = np.stack(channels, axis=0)

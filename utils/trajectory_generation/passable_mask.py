@@ -44,18 +44,46 @@ class PassableMaskGenerator:
         self.dem_src = rasterio.open(utm_dir / 'dem_utm.tif')
         self.slope_src = rasterio.open(utm_dir / 'slope_utm.tif')
         self.lulc_src = rasterio.open(utm_dir / 'lulc_utm.tif')
+
+        road_path = utm_dir / 'road_utm.tif'
+        if road_path.exists():
+            self.road_src = rasterio.open(road_path)
+            self.road = self.road_src.read(1)
+        else:
+            self.road_src = None
+            self.road = None
         
         # 读取数据
         self.dem = self.dem_src.read(1)
         self.slope = self.slope_src.read(1)
         self.lulc = self.lulc_src.read(1)
-        
+
+        shapes = [self.dem.shape, self.slope.shape, self.lulc.shape]
+        if self.road is not None:
+            shapes.append(self.road.shape)
+        if len({s for s in shapes}) != 1:
+            h = min(s[0] for s in shapes)
+            w = min(s[1] for s in shapes)
+            logger.warning(f"栅格shape不一致，将裁剪到共同尺寸: {(h, w)}; shapes={shapes}")
+            self.dem = self.dem[:h, :w]
+            self.slope = self.slope[:h, :w]
+            self.lulc = self.lulc[:h, :w]
+            if self.road is not None:
+                self.road = self.road[:h, :w]
+
         # 处理nodata
         self.dem = np.where(self.dem == -32768, np.nan, self.dem)
-        
+
         self.shape = self.dem.shape
         self.transform = self.dem_src.transform
         self.crs = self.dem_src.crs
+
+        if self.road is not None and self.road.shape != self.shape:
+            logger.warning(f"road_utm.tif shape不匹配: road={self.road.shape}, env={self.shape}，忽略road override")
+            self.road = None
+            if self.road_src is not None:
+                self.road_src.close()
+                self.road_src = None
         
         logger.info(f"  栅格尺寸: {self.shape}")
         logger.info(f"  分辨率: {self.transform.a}m × {-self.transform.e}m")
@@ -69,6 +97,8 @@ class PassableMaskGenerator:
             self.slope_src.close()
         if hasattr(self, 'lulc_src'):
             self.lulc_src.close()
+        if hasattr(self, 'road_src') and self.road_src is not None:
+            self.road_src.close()
     
     def create_lulc_mask(self) -> np.ndarray:
         """
@@ -187,6 +217,11 @@ class PassableMaskGenerator:
         # 3. 合并：M_passable = M_LULC ∧ M_slope
         logger.info("\n合并LULC和坡度掩码...")
         M_passable = M_LULC & M_slope
+
+        if self.road is not None:
+            road_mask = self.road > 0
+            if np.any(road_mask):
+                M_passable = M_passable | road_mask
         
         passable_count = np.sum(M_passable)
         logger.info(f"  合并后可通行: {passable_count} 像素 ({passable_count/M_passable.size*100:.2f}%)")

@@ -1,0 +1,53 @@
+# TerraTNT 可视化验证系统配置
+app:
+  title: "TerraTNT 可视化验证系统"
+  version: "2.0.0"
+  width: 1600
+  height: 950
+  min_width: 1200
+  min_height: 700
+  theme: "dark"
+
+paths:
+  project_root: null  # auto-detect
+  data_processed: "data/processed"
+  final_dataset: "data/processed/final_dataset_v1"
+  complete_dataset: "data/processed/complete_dataset_10s"
+  fas_splits: "data/processed/fas_splits"
+  utm_grid: "data/processed/utm_grid"
+  runs: "runs"
+  outputs: "outputs"
+
+map:
+  default_coverage_km: 140.0
+  patch_size: 512
+  hillshade_azimuth: 315.0
+  hillshade_altitude: 45.0
+
+models:
+  checkpoint_dirs:
+    - "runs/incremental_models"
+    - "runs/incremental_models_v7"
+    - "runs/plan_b_fas1"
+  model_types:
+    TerraTNT: { color: "#1f77b4", checkpoint_pattern: "terratnt_fas*/*/best_model.pth" }
+    V3_Waypoint: { color: "#ff7f0e", checkpoint_pattern: "incremental_models/V3_best.pth" }
+    V4_WP_Spatial: { color: "#2ca02c", checkpoint_pattern: "incremental_models/V4_best.pth" }
+    V6_Autoreg: { color: "#d62728", checkpoint_pattern: "incremental_models/V6_best.pth" }
+    V6R_Robust: { color: "#9467bd", checkpoint_pattern: "incremental_models/V6R_best.pth" }
+    V7_ConfGate: { color: "#8c564b", checkpoint_pattern: "incremental_models_v7/V7_best.pth" }
+    LSTM_only: { color: "#e377c2", checkpoint_pattern: "LSTM_only_d1/best_model.pth" }
+    LSTM_Env_Goal: { color: "#7f7f7f", checkpoint_pattern: "LSTM_Env_Goal_d1/best_model.pth" }
+    Seq2Seq_Attn: { color: "#bcbd22", checkpoint_pattern: "Seq2Seq_Attn_d1/best_model.pth" }
+    MLP: { color: "#17becf", checkpoint_pattern: "MLP_d1/best_model.pth" }
+    ConstantVelocity: { color: "#aec7e8", checkpoint_pattern: null }
+
+evaluation:
+  phases:
+    P1a: { name: "精确终点(域内)", sigma_km: 1.0 }
+    P1b: { name: "精确终点(OOD)", sigma_km: 1.0 }
+    P2a: { name: "区域先验(σ=10km)", sigma_km: 10.0 }
+    P2b: { name: "区域先验(σ=15km)", sigma_km: 15.0 }
+    P2c: { name: "区域先验(偏移5km)", sigma_km: 10.0, offset_km: 5.0 }
+    P3a: { name: "无先验(直行)" }
+    P3b: { name: "无先验(转弯)" }
