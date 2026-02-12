@@ -37,7 +37,7 @@ class ModelManager:
             'V3_Waypoint': ['incremental_models/V3_best.pth'],
             'V4_WP_Spatial': ['incremental_models/V4_best.pth'],
             'V6_Autoreg': ['incremental_models/V6_best.pth'],
-            'V6R_Robust': ['incremental_models/V6R_best.pth'],
+            'V6R_Robust': ['incremental_models_v6r/V6_best.pth', 'incremental_models/V6R_best.pth'],
             'V7_ConfGate': ['incremental_models_v7/V7_best.pth'],
             'LSTM_only': ['LSTM_only_d1/best_model.pth'],
             'LSTM_Env_Goal': ['LSTM_Env_Goal_d1/best_model.pth'],
@@ -98,15 +98,17 @@ class ModelManager:
         if isinstance(wte, torch.Tensor) and wte.dim() == 2 and wte.shape[0] > 0:
             waypoint_stride = int(FUTURE_LEN // (wte.shape[0] + 1))
         hist_in = 26
+        hist_hidden = 128  # default
         wih = sd.get('history_encoder.lstm.weight_ih_l0', None)
         if isinstance(wih, torch.Tensor) and wih.dim() == 2:
             hist_in = int(wih.shape[1])
+            hist_hidden = int(wih.shape[0] // 4)  # LSTM: 4*hidden_dim
         num_goals = int(ckpt.get('num_candidates', 6))
 
         m = TerraTNT(
-            history_input_dim=hist_in, history_hidden_dim=256,
-            env_channels=18, env_hidden_dim=128,
-            future_length=FUTURE_LEN, num_candidates=num_goals,
+            history_input_dim=hist_in, history_hidden_dim=hist_hidden,
+            env_channels=18, env_feature_dim=hist_hidden,
+            future_len=FUTURE_LEN, num_goals=num_goals,
             waypoint_stride=waypoint_stride, paper_decoder=paper_decoder,
             use_dual_scale=use_dual_scale,
         ).to(self.device)
