@@ -809,6 +809,210 @@ class ConfidenceGatedV7(nn.Module):
 
 
 # ============================================================
+#  V8: Decoupled Goal with Additive Residual
+#      Key change: context = base_fusion(history, env) + α * goal_residual
+#      When α=0, decoder still has full history+env context (unlike V6 which collapses)
+#      α is learned from classifier confidence at inference time
+# ============================================================
+
+class DecoupledGoalV8(nn.Module):
+    """V8: V6 with decoupled goal via additive residual.
+    
+    Problem with V6: fusion([history, env, goal]) creates deep coupling.
+    When goal is bad (Phase4), the entire context collapses (α=0 → ADE=26km).
+    
+    Solution: Split fusion into:
+      base_context = base_fusion([history, env])     # always valid
+      goal_residual = goal_proj(goal_feat)           # additive goal signal
+      context = base_context + α * goal_residual     # α=0 → still functional
+    
+    This preserves V6's full capability when α=1, but gracefully degrades
+    to a history+env-only predictor when α=0.
+    
+    Training: From scratch with curriculum random α (0→1), teaching the model
+    to work at any goal reliability level. No V6 weight transfer needed since
+    the fusion architecture is different.
+    """
+    def __init__(self, history_dim=26, hidden_dim=128, env_channels=18,
+                 env_feature_dim=128, decoder_hidden_dim=256,
+                 future_len=360, num_waypoints=10, num_candidates=6,
+                 env_coverage_km=140.0, goal_norm_denom=70.0):
+        super().__init__()
+        self.future_len = future_len
+        self.hidden_dim = decoder_hidden_dim
+        self.env_feature_dim = env_feature_dim
+        self.num_waypoints = num_waypoints
+        self.env_coverage_km = env_coverage_km
+        stride = future_len // (num_waypoints + 1)
+        self.waypoint_indices = [stride * (i + 1) - 1 for i in range(num_waypoints)]
+        if self.waypoint_indices[-1] != future_len - 1:
+            self.waypoint_indices[-1] = future_len - 1
+
+        # --- TerraTNT components (same as V6) ---
+        from models.terratnt import PaperCNNEnvironmentEncoder, PaperLSTMHistoryEncoder, PaperGoalClassifier
+        self.env_encoder = PaperCNNEnvironmentEncoder(
+            input_channels=env_channels, feature_dim=env_feature_dim)
+        self.history_encoder = PaperLSTMHistoryEncoder(
+            input_dim=history_dim, hidden_dim=hidden_dim, num_layers=2)
+        self.goal_classifier = PaperGoalClassifier(
+            env_feature_dim=env_feature_dim, history_feature_dim=hidden_dim,
+            num_goals=num_candidates, goal_norm_denom=goal_norm_denom)
+
+        # --- DECOUPLED Fusion (KEY CHANGE from V6) ---
+        # Base context: history + env only (no goal)
+        self.base_fusion = nn.Linear(hidden_dim + env_feature_dim, decoder_hidden_dim)
+        # Goal residual: projected to same dim, added with α scaling
+        self.goal_fc = nn.Linear(2, 64)
+        self.goal_proj = nn.Linear(64, decoder_hidden_dim)
+
+        # --- Waypoint predictor ---
+        self.wp_query = nn.Parameter(torch.randn(num_waypoints, decoder_hidden_dim) * 0.02)
+        self.wp_time_proj = nn.Sequential(nn.Linear(1, decoder_hidden_dim), nn.ReLU())
+        self.wp_out = nn.Linear(decoder_hidden_dim, 2)
+        self.wp_residual_scale = nn.Parameter(torch.tensor(5.0))
+
+        # --- Spatial env sampling ---
+        self.spatial_in = nn.Sequential(nn.Linear(env_feature_dim, decoder_hidden_dim), nn.ReLU())
+        self.env_local_scale = nn.Parameter(torch.tensor(1.0))
+
+        # --- Autoregressive decoder (same structure as V6) ---
+        self.decoder_lstm = nn.LSTM(
+            2 + decoder_hidden_dim + decoder_hidden_dim,
+            decoder_hidden_dim, num_layers=2, batch_first=True)
+        self.output_fc = nn.Linear(decoder_hidden_dim, 2)
+
+        # --- Segment conditioning ---
+        self.seg_proj = nn.Sequential(
+            nn.Linear(4 + decoder_hidden_dim, decoder_hidden_dim), nn.ReLU())
+
+        # --- Goal Scale Predictor ---
+        scale_input_dim = 2 + hidden_dim + env_feature_dim
+        self.goal_scale_net = nn.Sequential(
+            nn.Linear(scale_input_dim, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1),
+        )
+        # Initialize to output α≈0.88 (trust goal by default)
+        nn.init.zeros_(self.goal_scale_net[-1].weight)
+        nn.init.constant_(self.goal_scale_net[-1].bias, 2.0)
+
+    def _get_segment_index(self, t):
+        for si, end_t in enumerate(self.waypoint_indices):
+            if t <= end_t:
+                return si
+        return len(self.waypoint_indices) - 1
+
+    def forward(self, env_map, history, candidates, current_pos,
+                teacher_forcing_ratio=0.0, ground_truth=None,
+                target_goal_idx=None, use_gt_goal=False, goal=None,
+                force_alpha=None, **kwargs):
+        B = env_map.size(0)
+        device = env_map.device
+
+        # Encode
+        env_global, env_tokens, env_spatial = self.env_encoder(env_map)
+        _, (h_n, c_n) = self.history_encoder(history)
+        history_features = h_n[-1]
+
+        # Goal classification
+        goal_logits = self.goal_classifier(env_global, history_features, candidates)
+
+        # Select goal
+        if goal is not None:
+            selected_goal = goal
+        elif use_gt_goal and target_goal_idx is not None:
+            selected_goal = candidates[torch.arange(B, device=device), target_goal_idx]
+        else:
+            _, top_idx = torch.max(goal_logits, dim=1)
+            selected_goal = candidates[torch.arange(B, device=device), top_idx]
+
+        # Predict goal scale α
+        goal_probs = F.softmax(goal_logits, dim=1)
+        max_prob = goal_probs.max(dim=1, keepdim=True).values
+        entropy = -(goal_probs * (goal_probs + 1e-8).log()).sum(dim=1, keepdim=True)
+        alpha_logit = self.goal_scale_net(
+            torch.cat([max_prob, entropy, history_features, env_global], dim=1))
+        alpha_pred = torch.sigmoid(alpha_logit)  # (B, 1)
+
+        if force_alpha is not None:
+            if isinstance(force_alpha, (int, float)):
+                alpha = torch.full((B, 1), float(force_alpha), device=device)
+            else:
+                alpha = force_alpha
+        else:
+            alpha = alpha_pred
+
+        # === DECOUPLED FUSION (KEY DIFFERENCE FROM V6) ===
+        # Base context from history + env only
+        base_context = F.relu(self.base_fusion(
+            torch.cat([history_features, env_global], dim=1)))  # (B, decoder_hidden_dim)
+        # Goal as additive residual, scaled by α
+        goal_feat = F.relu(self.goal_fc(selected_goal))  # (B, 64)
+        goal_residual = self.goal_proj(goal_feat)  # (B, decoder_hidden_dim)
+        context = base_context + alpha * goal_residual  # α=0 → pure history+env
+
+        # Predict waypoints (base_guess scaled by α)
+        frac_list = [float(idx + 1) / float(self.future_len) for idx in self.waypoint_indices]
+        frac = torch.tensor(frac_list, device=device, dtype=context.dtype).view(1, -1, 1).expand(B, -1, -1)
+        base_guess = selected_goal.unsqueeze(1) * frac * alpha.unsqueeze(-1)
+        q = self.wp_query.unsqueeze(0).expand(B, -1, -1)
+        t_feat = self.wp_time_proj(frac.reshape(-1, 1)).view(B, -1, self.hidden_dim)
+        wp_h = context.unsqueeze(1) + q + t_feat
+        resid = torch.tanh(self.wp_out(wp_h)) * self.wp_residual_scale
+        pred_waypoints = base_guess + resid
+
+        # Sample spatial env at waypoints
+        half = max(1e-6, self.env_coverage_km * 0.5)
+        wp0 = torch.zeros(B, 1, 2, device=device, dtype=context.dtype)
+        wp_nodes = torch.cat([wp0, pred_waypoints], dim=1)
+        wp_env_feats = torch.zeros(B, self.num_waypoints + 1, self.hidden_dim, device=device)
+        if env_spatial is not None:
+            for wi in range(wp_nodes.size(1)):
+                pos = wp_nodes[:, wi, :]
+                gx = (pos[:, 0] / half).clamp(-1.0, 1.0)
+                gy = (-pos[:, 1] / half).clamp(-1.0, 1.0)
+                grid = torch.stack([gx, gy], dim=1).view(-1, 1, 1, 2)
+                samp = F.grid_sample(env_spatial, grid, mode='bilinear',
+                                     padding_mode='zeros', align_corners=True)
+                wp_env_feats[:, wi, :] = self.spatial_in(samp.squeeze(-1).squeeze(-1))
+
+        # Segment conditioning
+        norm_scale = 50.0
+        seg_conds = []
+        for si in range(self.num_waypoints):
+            seg_input = torch.cat([
+                wp_nodes[:, si, :] / norm_scale,
+                wp_nodes[:, si + 1, :] / norm_scale,
+                (wp_env_feats[:, si, :] + wp_env_feats[:, si + 1, :]) * 0.5 * self.env_local_scale,
+            ], dim=1)
+            seg_conds.append(self.seg_proj(seg_input))
+
+        # Autoregressive decoding
+        h_dec = torch.zeros(2, B, self.hidden_dim, device=device)
+        c_dec = torch.zeros(2, B, self.hidden_dim, device=device)
+        h_dec[-1] = context
+
+        curr_pos = torch.zeros(B, 1, 2, device=device)
+        preds = []
+        for t in range(self.future_len):
+            si = self._get_segment_index(t)
+            seg_cond = seg_conds[si].unsqueeze(1)
+            dec_in = torch.cat([curr_pos, context.unsqueeze(1), seg_cond], dim=-1)
+            out, (h_dec, c_dec) = self.decoder_lstm(dec_in, (h_dec, c_dec))
+            delta = self.output_fc(out)
+            curr_pos = curr_pos + delta
+            preds.append(curr_pos)
+
+        predictions = torch.cat(preds, dim=1)
+
+        if not self.training:
+            return predictions, goal_logits, alpha_pred
+
+        deltas = torch.cat([preds[0]] + [preds[i] - preds[i-1] for i in range(1, len(preds))], dim=1)
+        return deltas, goal_logits, pred_waypoints, alpha_pred, alpha_logit
+
+
+# ============================================================
 #  Training
 # ============================================================
 

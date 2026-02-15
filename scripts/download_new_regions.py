@@ -16,16 +16,25 @@ import time
 import os
 import argparse
 
+# 设置代理（国内网络需要）
+os.environ.setdefault('https_proxy', 'socks5://127.0.0.1:7897')
+os.environ.setdefault('http_proxy', 'socks5://127.0.0.1:7897')
+
 # 初始化Earth Engine - 使用服务账号
 credentials_path = '/home/zmc/文档/programwork/gen-lang-client-0843667030-72e96d89711d.json'
-os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credentials_path
 
 try:
-    ee.Initialize()
-    print("✓ Earth Engine 已初始化（服务账号）")
+    import json
+    with open(credentials_path) as f:
+        key_data = json.load(f)
+    service_account = key_data['client_email']
+    credentials = ee.ServiceAccountCredentials(service_account, credentials_path)
+    ee.Initialize(credentials)
+    print(f"✓ Earth Engine 已初始化（服务账号: {service_account}）")
 except Exception as e:
     print(f"❌ 初始化失败: {e}")
     print("  请确认服务账号密钥文件存在且有效")
+    print("  请确认代理已启动（socks5://127.0.0.1:7897）")
     sys.exit(1)
 
 # 从config.yaml读取区域配置

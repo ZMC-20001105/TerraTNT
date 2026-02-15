@@ -653,7 +653,16 @@ class TrajectoryGeneratorV2:
         accepted_goal_utm: Optional[Tuple[float, float]] = None
         accepted_path: Optional[List[Tuple[float, float]]] = None
 
-        planner = HierarchicalAStarPlanner(self.region, intent, vehicle_type)
+        # 缓存 planner 实例，避免每次调用都重新加载 cost_map（大区域单层>200MB）
+        _planner_key = (self.region, intent, vehicle_type)
+        if not hasattr(self, '_planner_cache'):
+            self._planner_cache = {}
+        if _planner_key not in self._planner_cache:
+            # 只保留当前 intent×vehicle_type 的 planner，释放旧的
+            self._planner_cache.clear()
+            import gc; gc.collect()
+            self._planner_cache[_planner_key] = HierarchicalAStarPlanner(self.region, intent, vehicle_type)
+        planner = self._planner_cache[_planner_key]
         planning_overrides = planning_overrides or {}
         downsample_factor = int(planning_overrides.get('downsample_factor', 10))
         waypoint_interval = float(planning_overrides.get('waypoint_interval', 5000.0))

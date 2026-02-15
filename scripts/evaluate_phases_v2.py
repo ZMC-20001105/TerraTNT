@@ -639,19 +639,15 @@ def evaluate_all_models(models_dict, dataset, device, batch_size=16):
                 with autocast('cuda', enabled=True):
                     if model_type == 'baseline_with_goal':
                         # LSTM_Env_Goal: 使用热力图提取的goal（公平对比）
+                        # 模型已输出累积位置，不需要cumsum
                         out = model(history_xy, env_map, goal=heatmap_goal)
-                        if isinstance(out, tuple):
-                            pred_pos = torch.cumsum(out[0], dim=1)
-                        else:
-                            pred_pos = out
+                        pred_pos = out[0] if isinstance(out, tuple) else out
 
                     elif model_type == 'baseline_no_goal':
                         # LSTMOnly, MLP, Seq2Seq: 不使用goal
+                        # 模型已输出累积位置，不需要cumsum
                         out = model(history_xy, env_map)
-                        if isinstance(out, tuple):
-                            pred_pos = torch.cumsum(out[0], dim=1)
-                        else:
-                            pred_pos = out
+                        pred_pos = out[0] if isinstance(out, tuple) else out
 
                     elif model_type == 'terratnt':
                         # TerraTNT原版: 返回delta，需要cumsum
@@ -686,11 +682,16 @@ def evaluate_all_models(models_dict, dataset, device, batch_size=16):
 
                     elif model_type == 'incremental':
                         # V3/V4: LSTM-based incremental models
+                        # 模型已输出累积位置，不需要cumsum
                         out = model(history_xy, env_map, goal=heatmap_goal)
-                        if isinstance(out, tuple):
-                            pred_pos = torch.cumsum(out[0], dim=1)
-                        else:
-                            pred_pos = out
+                        pred_pos = out[0] if isinstance(out, tuple) else out
+
+                    elif model_type == 'faithful_with_goal':
+                        # YNet/PECNet faithful: 传heatmap_goal作为CVAE条件
+                        # Phase1时heatmap_goal≈GT, Phase2/3时为模糊/无先验
+                        # 模型已输出累积位置，不需要cumsum
+                        out = model(history_xy, env_map, goal=heatmap_goal)
+                        pred_pos = out[0] if isinstance(out, tuple) else out
 
                     else:
                         continue
@@ -724,6 +725,8 @@ def load_all_models(device):
         LSTMEnvGoalWaypoint, LSTMEnvGoalWaypointSpatial,
         TerraTNTFusionV5, TerraTNTAutoregV6,
     )
+    from models.baselines.ynet_faithful import YNetFaithful
+    from models.baselines.pecnet_faithful import PECNetFaithful
 
     runs = PROJECT_ROOT / 'runs'
     models = {}
@@ -774,6 +777,37 @@ def load_all_models(device):
         m.eval()
         models[name] = {'model': m, 'type': cfg['type']}
         print(f"  [OK] {name}")
+
+    # ── YNet & PECNet (faithful implementations, 论文对比模型) ──
+    faithful_configs = {
+        'YNet': {
+            'cls': YNetFaithful,
+            'kwargs': dict(history_len=HISTORY_LEN, future_len=FUTURE_LEN),
+            'ckpt': runs / 'ynet_faithful' / 'fas1_20260207_091604' / 'best_model.pth',
+            'type': 'faithful_with_goal',
+        },
+        'PECNet': {
+            'cls': PECNetFaithful,
+            'kwargs': dict(history_len=HISTORY_LEN, future_len=FUTURE_LEN),
+            'ckpt': runs / 'pecnet_faithful' / 'fas1_20260207_091604' / 'best_model.pth',
+            'type': 'faithful_with_goal',
+        },
+    }
+
+    for name, cfg in faithful_configs.items():
+        if not cfg['ckpt'].exists():
+            print(f"  [SKIP] {name}: {cfg['ckpt']}")
+            continue
+        try:
+            m = cfg['cls'](**cfg['kwargs']).to(device)
+            ckpt = torch.load(cfg['ckpt'], map_location=device)
+            sd = ckpt.get('model_state_dict', ckpt)
+            m.load_state_dict(sd)
+            m.eval()
+            models[name] = {'model': m, 'type': cfg['type']}
+            print(f"  [OK] {name} (faithful, val_ade={ckpt.get('val_ade', '?')}m)")
+        except Exception as e:
+            print(f"  [FAIL] {name}: {e}")
 
     # ── Incremental V3/V4 ──
     incr_configs = {

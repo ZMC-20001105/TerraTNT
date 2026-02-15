@@ -40,7 +40,7 @@ def load_config():
 
 
 def find_raw_file(raw_dir, region, data_type):
-    """查找原始数据文件（单文件或tiles目录）"""
+    """查找原始数据文件（单文件或tiles目录或chunks子目录）"""
     # 单文件格式
     single = raw_dir / f'{region}_{data_type}.tif'
     if single.exists():
@@ -53,12 +53,19 @@ def find_raw_file(raw_dir, region, data_type):
         if tiles_dir.exists() and list(tiles_dir.glob('tile_*.tif')):
             return 'tiles', tiles_dir
 
+    # chunks子目录格式 (download_regions_direct.py 输出)
+    chunks_dir = raw_dir / region / data_type
+    if chunks_dir.exists() and list(chunks_dir.glob('chunk_*.tif')):
+        return 'chunks', chunks_dir
+
     return None, None
 
 
 def merge_tiles(tiles_dir):
-    """合并GEE分块tiles为单个文件"""
+    """合并GEE分块tiles/chunks为单个文件"""
     tile_files = sorted(tiles_dir.glob('tile_*.tif'))
+    if not tile_files:
+        tile_files = sorted(tiles_dir.glob('chunk_*.tif'))
     logger.info(f"  合并 {len(tile_files)} 个tiles...")
     src_files = [rasterio.open(f) for f in tile_files]
     mosaic, out_trans = merge(src_files)
@@ -155,7 +162,7 @@ def process_region(region_key, region_cfg):
             continue
 
         logger.info(f"\n--- {data_type.upper()} ---")
-        if fmt == 'tiles':
+        if fmt in ('tiles', 'chunks'):
             mosaic, meta = merge_tiles(source)
             reproject_to_utm(mosaic, utm_dir / utm_name, epsg, res, resamp, meta)
         else:
@@ -173,7 +180,7 @@ def process_region(region_key, region_cfg):
             fmt, source = find_raw_file(raw_dir, region_key, data_type)
             if fmt is not None:
                 logger.info(f"\n--- {data_type.upper()} (from GEE) ---")
-                if fmt == 'tiles':
+                if fmt in ('tiles', 'chunks'):
                     mosaic, meta = merge_tiles(source)
                     reproject_to_utm(mosaic, utm_dir / utm_name, epsg, res, Resampling.bilinear, meta)
                 else:

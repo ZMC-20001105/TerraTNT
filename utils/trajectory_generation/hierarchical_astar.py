@@ -293,7 +293,7 @@ class HierarchicalAStarPlanner:
         
         # 粗A*搜索：使用标准A*（权重1.0）以充分利用道路低代价，避免过度贪心走直线
         logger.info("  运行粗A*搜索...")
-        coarse_path = self.astar(coarse_start, coarse_goal, coarse_cost, max_iterations=2000000, heuristic_weight=1.0)
+        coarse_path = self.astar(coarse_start, coarse_goal, coarse_cost, max_iterations=500000, heuristic_weight=1.0)
         
         if coarse_path is None:
             logger.error("  粗规划失败！")
@@ -418,7 +418,7 @@ class HierarchicalAStarPlanner:
             goal_pixel = nearest
         
         # 直接在原始代价图上运行A*（降低启发权重以充分利用道路低代价）
-        base_max_iter = int(min(3_000_000, max(500_000, self.cost_map.size * 0.05)))
+        base_max_iter = int(min(800_000, max(200_000, self.cost_map.size * 0.015)))
         path_pixels = None
         for heuristic_weight in (1.0, 0.8, 1.1):
             path_pixels = self.astar(
