@@ -7,25 +7,17 @@
 
 ## 一、实验完成状态
 
-### ✅ 已完成
+### ✅ 全部完成
 - 域内评估 (13模型×7Phase) → `outputs/evaluation/phase_v2_with_faithful/`
 - TerraTNT-Env训练+评估 → P3a ADE=3.21km (-38.5% vs Seq2Seq)
 - 消融实验 (模块/通道/运动学) → `outputs/evaluation/ablation/`
 - Waypoint消融 (2/4/6/8/10) → `outputs/evaluation/control_variables/`
 - K敏感性 (K=6~200) → `candidate_k_sensitivity.json`
 - 观测长度 (3~15min) → `observation_length_sensitivity.json`
-- 跨区域: BF→Donbas, BF→Scottish Highlands
+- 跨区域: BF→Donbas (V6R ADE=5.28km), BF→Scottish Highlands (3.45km), BF→Carpathians (5.10km)
 - 轨迹: BF(1166) + SH(600) + DB(204) + CP(201) = 2171条
-- 图表: 架构图/训练曲线/Phase对比/消融图 (可靠)
+- 图表: 33个PDF图表全部用真实数据生成 → `outputs/paper_final/`
 - GitHub推送 ✅
-
-### 🔄 进行中
-- 跨区域: BF→Carpathians (评估运行中)
-
-### ❌ 需修复
-- 跨区域图表(fig4_25/26/27): 硬编码PLACEHOLDER → 需用真实数据重生成
-- 候选K敏感性图: 旧图虚假数据 → 需用真实实验数据重生成
-- 箱线图/时间趋势图: 错误模型标签 → 需用faithful数据重生成
 
 ---
 
@@ -58,9 +50,9 @@
 **表4.6 Phase1a (精确终点先验)**:
 | 模型 | ADE(km) | FDE(km) |
 |------|---------|---------|
-| V6R_Robust(本文) | **1.25** | **2.29** |
-| V6_Autoreg | 1.41 | 2.60 |
-| LSTM_Env_Goal | 1.41 | 1.43 |
+| V6R_Robust(本文) | **1.25** | **2.13** |
+| V6_Autoreg | 1.29 | 2.42 |
+| LSTM_Env_Goal | 1.41 | 1.41 |
 | YNet | 3.03 | 1.02 |
 | PECNet | 3.91 | 3.18 |
 | Seq2Seq_Attn | 5.98 | 11.99 |
@@ -139,17 +131,18 @@
 
 ## 四、需重新生成的图表
 
-### 必须重做
-1. **fig4_25/26/27 跨区域图**: Carpathians评估完成后，用4区域真实数据替换PLACEHOLDER
-2. **fig4_9 候选K敏感性图**: 用 `candidate_k_sensitivity.json` 真实数据重新生成
-3. **箱线图(fig4_box_phase1/2/3)**: 用faithful数据重新生成，包含真正YNet/PECNet
+### 全部已用真实数据重新生成 (33个PDF)
+- fig4_25/26/27 跨区域图: 4区域真实数据 ✅
+- fig4_11 候选K敏感性: 真实实验数据 ✅
+- fig4_12 观测长度敏感性: 真实实验数据 ✅
+- fig4_box_phase1/2/3 箱线图: 正确模型标签 ✅
+- fig4_time_phase1/2/3 时间趋势: 正确模型标签 ✅
+- fig4_1_architecture / fig4_6_training_curves / fig4_7_phase_comparison / fig4_8_ablation / fig4_9_waypoint_ablation ✅
+- fig4_10_phase_heatmap ✅
+- 第3章图表 (kfold/feature_importance/loocv) ✅
 
-### 已可靠
-- fig4_1_architecture ✅
-- fig4_6_training_curves ✅
-- fig4_7_phase_comparison ✅
-- fig4_8_ablation ✅
-- fig4_9_10_control_variables (waypoint部分) ✅
+输出目录: `outputs/paper_final/`
+生成脚本: `scripts/generate_all_paper_figures.py`
 
 ---
 
