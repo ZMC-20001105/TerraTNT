@@ -681,20 +681,182 @@ def fig_temporal_trend(phase, phase_label, out_name):
 
 
 # ============================================================
-#  跨区域图表占位 (需要真实实验数据后替换)
+#  候选K敏感性 + 观测长度敏感性 (真实实验数据)
 # ============================================================
-def fig_cross_region_placeholder():
-    print('\n--- 跨区域图表 (占位) ---')
-    fig, ax = plt.subplots(figsize=(8, 6))
-    ax.text(0.5, 0.5,
-            '跨区域实验尚未完成\n需要完成4区域轨迹生成+训练+评估后\n用真实数据替换此图',
-            transform=ax.transAxes, ha='center', va='center',
-            fontsize=16, color='red', fontweight='bold',
-            bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
-    ax.set_title('图4.25-4.27: 跨区域泛化实验 (待完成)', fontsize=13)
-    ax.set_xticks([])
-    ax.set_yticks([])
-    save_fig(fig, 'fig4_25_26_27_PLACEHOLDER')
+def fig_k_sensitivity():
+    print('\n--- 图4.11: 候选K敏感性 ---')
+    kp = ROOT / 'outputs/evaluation/control_variables/candidate_k_sensitivity.json'
+    if not kp.exists():
+        print('  ⚠️ 无K敏感性数据，跳过')
+        return
+    with open(kp) as f:
+        kdata = json.load(f)
+    ks = sorted(kdata.keys(), key=int)
+    k_vals = [int(k) for k in ks]
+    ade_vals = [kdata[k]['ade'] / 1000 for k in ks]
+    fde_vals = [kdata[k]['fde'] / 1000 for k in ks]
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.plot(k_vals, ade_vals, 'o-', color='#1565C0', lw=2, ms=8, label='ADE')
+    ax.plot(k_vals, fde_vals, 's--', color='#E91E63', lw=2, ms=8, label='FDE')
+    ax.set_xlabel('候选终点数量 K')
+    ax.set_ylabel('误差 (km)')
+    ax.set_title('候选终点数量对预测性能的影响', fontweight='bold')
+    ax.legend(fontsize=10)
+    ax.grid(alpha=0.3)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.tight_layout()
+    save_fig(fig, 'fig4_11_k_sensitivity')
+
+
+def fig_obs_length():
+    print('\n--- 图4.12: 观测长度敏感性 ---')
+    op = ROOT / 'outputs/evaluation/control_variables/observation_length_sensitivity.json'
+    if not op.exists():
+        print('  ⚠️ 无观测长度数据，跳过')
+        return
+    with open(op) as f:
+        odata = json.load(f)
+    steps = sorted(odata.keys(), key=int)
+    mins = [odata[s]['obs_minutes'] for s in steps]
+    ade_vals = [odata[s]['ade'] / 1000 for s in steps]
+    fde_vals = [odata[s]['fde'] / 1000 for s in steps]
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.plot(mins, ade_vals, 'o-', color='#1565C0', lw=2, ms=8, label='ADE')
+    ax.plot(mins, fde_vals, 's--', color='#E91E63', lw=2, ms=8, label='FDE')
+    ax.set_xlabel('观测时长 (分钟)')
+    ax.set_ylabel('误差 (km)')
+    ax.set_title('观测时长对预测性能的影响', fontweight='bold')
+    ax.legend(fontsize=10)
+    ax.grid(alpha=0.3)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.tight_layout()
+    save_fig(fig, 'fig4_12_obs_length_sensitivity')
+
+
+# ============================================================
+#  跨区域图表 (真实实验数据)
+# ============================================================
+def fig_cross_region():
+    print('\n--- 图4.25-4.27: 跨区域泛化 ---')
+    cross_dirs = {
+        'Donbas': ROOT / 'outputs/evaluation/cross_bohemian_forest_to_donbas',
+        'Scottish H.': ROOT / 'outputs/evaluation/cross_bohemian_forest_to_scottish_highlands',
+        'Carpathians': ROOT / 'outputs/evaluation/cross_bohemian_forest_to_carpathians',
+    }
+    # 域内结果
+    bf_path = ROOT / 'outputs/evaluation/phase_v2_with_faithful/phase_v2_results.json'
+
+    region_p1a = {}  # region -> {model: ade}
+    # 域内
+    if bf_path.exists():
+        with open(bf_path) as f:
+            bf = json.load(f)
+        if 'P1a' in bf:
+            region_p1a['Bohemian F.'] = {m: v['ade_mean']/1000 for m, v in bf['P1a']['models'].items()}
+
+    for rname, rdir in cross_dirs.items():
+        rp = rdir / 'phase_v2_results.json'
+        if rp.exists():
+            with open(rp) as f:
+                rd = json.load(f)
+            if 'P1a' in rd:
+                region_p1a[rname] = {m: v['ade_mean']/1000 for m, v in rd['P1a']['models'].items()}
+
+    if len(region_p1a) < 2:
+        print('  ⚠️ 跨区域数据不足，生成占位图')
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.text(0.5, 0.5, '跨区域数据不足', transform=ax.transAxes,
+                ha='center', va='center', fontsize=16, color='red')
+        save_fig(fig, 'fig4_25_26_27_PLACEHOLDER')
+        return
+
+    # --- fig4_25: 各区域V6R_Robust ADE柱状图 ---
+    key_model = 'V6R_Robust'
+    regions = list(region_p1a.keys())
+    ades = [region_p1a[r].get(key_model, float('nan')) for r in regions]
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    colors = ['#1565C0', '#FF9800', '#4CAF50', '#9C27B0']
+    bars = ax.bar(range(len(regions)), ades, color=colors[:len(regions)], width=0.6, edgecolor='white')
+    for bar, v in zip(bars, ades):
+        if not np.isnan(v):
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
+                    f'{v:.2f}', ha='center', va='bottom', fontsize=11, fontweight='bold')
+    ax.set_xticks(range(len(regions)))
+    ax.set_xticklabels(regions, fontsize=10)
+    ax.set_ylabel('ADE (km)')
+    ax.set_title('TerraTNT跨区域泛化性能 (Phase 1a)', fontweight='bold')
+    ax.grid(axis='y', alpha=0.3)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.tight_layout()
+    save_fig(fig, 'fig4_25_region_bars')
+
+    # --- fig4_26: 跨区域模型排名热力图 ---
+    show_models = ['V6R_Robust', 'V3_Waypoint', 'YNet', 'PECNet', 'LSTM_only', 'Seq2Seq_Attn']
+    model_labels_map = {'V6R_Robust': 'TerraTNT', 'V3_Waypoint': 'Waypoint',
+                        'YNet': 'YNet', 'PECNet': 'PECNet',
+                        'LSTM_only': 'LSTM', 'Seq2Seq_Attn': 'Seq2Seq'}
+    # 只保留在所有区域都有数据的模型
+    valid_models = []
+    for mk in show_models:
+        if all(mk in region_p1a.get(r, {}) for r in regions):
+            valid_models.append(mk)
+
+    if valid_models and len(regions) >= 2:
+        matrix = np.zeros((len(valid_models), len(regions)))
+        for j, r in enumerate(regions):
+            for i, mk in enumerate(valid_models):
+                matrix[i, j] = region_p1a[r].get(mk, np.nan)
+
+        fig, ax = plt.subplots(figsize=(9, 6))
+        im = ax.imshow(matrix, cmap='RdYlGn_r', aspect='auto')
+        ax.set_xticks(range(len(regions)))
+        ax.set_xticklabels(regions, fontsize=10)
+        ax.set_yticks(range(len(valid_models)))
+        ax.set_yticklabels([model_labels_map.get(m, m) for m in valid_models], fontsize=10)
+        for i in range(len(valid_models)):
+            for j in range(len(regions)):
+                v = matrix[i, j]
+                if not np.isnan(v):
+                    color = 'white' if v > np.nanmax(matrix) * 0.6 else 'black'
+                    ax.text(j, i, f'{v:.1f}', ha='center', va='center',
+                           fontsize=11, fontweight='bold', color=color)
+        ax.set_title('跨区域模型性能对比 ADE(km)', fontweight='bold')
+        plt.colorbar(im, ax=ax, label='ADE (km)', shrink=0.8)
+        plt.tight_layout()
+        save_fig(fig, 'fig4_26_cross_matrix')
+
+    # --- fig4_27: 域内vs域外性能退化 ---
+    if 'Bohemian F.' in region_p1a:
+        bf_ades = region_p1a['Bohemian F.']
+        other_regions = [r for r in regions if r != 'Bohemian F.']
+        if other_regions and valid_models:
+            fig, ax = plt.subplots(figsize=(8, 5))
+            x = np.arange(len(valid_models))
+            w = 0.8 / (1 + len(other_regions))
+            ax.bar(x - w*len(other_regions)/2, [bf_ades.get(m, 0) for m in valid_models],
+                   w, label='域内(BF)', color='#1565C0', alpha=0.8)
+            for oi, oreg in enumerate(other_regions):
+                or_ades = region_p1a[oreg]
+                ax.bar(x - w*len(other_regions)/2 + w*(oi+1),
+                       [or_ades.get(m, 0) for m in valid_models],
+                       w, label=f'域外({oreg})', alpha=0.8)
+            ax.set_xticks(x)
+            ax.set_xticklabels([model_labels_map.get(m, m) for m in valid_models],
+                              fontsize=9, rotation=15)
+            ax.set_ylabel('ADE (km)')
+            ax.set_title('域内 vs 域外泛化性能对比', fontweight='bold')
+            ax.legend(fontsize=8, loc='upper left')
+            ax.grid(axis='y', alpha=0.3)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            plt.tight_layout()
+            save_fig(fig, 'fig4_27_gen_loss')
 
 
 # ============================================================
@@ -732,8 +894,12 @@ def main():
     fig_boxplot('fas3', 'Phase 3', 'fig4_box_phase3')
     fig_temporal_trend('fas3', 'Phase 3', 'fig4_time_phase3')
 
-    # === 跨区域占位 ===
-    fig_cross_region_placeholder()
+    # === 候选K + 观测长度 ===
+    fig_k_sensitivity()
+    fig_obs_length()
+
+    # === 跨区域 (真实数据) ===
+    fig_cross_region()
 
     # === 表格数据 ===
     print_all_tables()
